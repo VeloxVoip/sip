@@ -39,7 +39,7 @@ COPY version/ version/
 RUN if [ "$TARGETPLATFORM" = "linux/arm64" ]; then GOARCH=arm64; else GOARCH=amd64; fi && \
     CGO_ENABLED=1 GOOS=linux GOARCH=${GOARCH} GO111MODULE=on go build -a \
     -ldflags "-X github.com/livekit/sip/version.Version=${VERSION}" \
-    -o livekit-sip ./cmd/livekit-sip
+    -o sip ./cmd/sip
 
 FROM debian:trixie-slim
 
@@ -50,9 +50,9 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # copy binary
-COPY --from=builder /workspace/livekit-sip /bin/
+COPY --from=builder /workspace/sip /bin/
 
 WORKDIR /sip
 
 # run
-ENTRYPOINT ["livekit-sip", "--config=/sip/config.yaml"]
+ENTRYPOINT ["sip", "--config=/sip/config.yaml"]

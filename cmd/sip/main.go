@@ -40,18 +40,18 @@ import (
 func main() {
 	cmd := &cli.Command{
 		Name:        "SIP",
-		Usage:       "LiveKit SIP",
+		Usage:       "SIP Server",
 		Version:     version.Version,
 		Description: "SIP connectivity for LiveKit",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:    "config",
-				Usage:   "LiveKit SIP yaml config file",
+				Usage:   "SIP Server yaml config file",
 				Sources: cli.EnvVars("SIP_CONFIG_FILE"),
 			},
 			&cli.StringFlag{
 				Name:    "config-body",
-				Usage:   "LiveKit SIP yaml config body",
+				Usage:   "SIP Server yaml config body",
 				Sources: cli.EnvVars("SIP_CONFIG_BODY"),
 			},
 		},

@@ -16,12 +16,10 @@ services:
         redis:
           address: 'localhost:6379'
         transports:
-          udp:
-            transport: "udp"
+          - protocol: "udp"
             bind: 0.0.0.0
             port: 5060
-          tcp:
-            transport: "tcp"
+          - protocol: "tcp"
             bind: 0.0.0.0
             port: 5060
         rtp_port: 10000-20000

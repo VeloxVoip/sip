@@ -295,24 +295,12 @@ func (s *Server) Start(agent *sipgo.UserAgent, sc *ServiceConfig, tlsConf *tls.C
 		return err
 	}
 
-	s.sipSrv.OnOptions(func(req *sip.Request, tx sip.ServerTransaction) {
-		s.onOptions(req, tx)
-	})
-	s.sipSrv.OnInvite(func(req *sip.Request, tx sip.ServerTransaction) {
-		s.onInvite(req, tx)
-	})
-	s.sipSrv.OnAck(func(req *sip.Request, tx sip.ServerTransaction) {
-		s.onAck(req, tx)
-	})
-	s.sipSrv.OnBye(func(req *sip.Request, tx sip.ServerTransaction) {
-		s.onBye(req, tx)
-	})
-	s.sipSrv.OnNotify(func(req *sip.Request, tx sip.ServerTransaction) {
-		s.onNotify(req, tx)
-	})
-	s.sipSrv.OnNoRoute(func(req *sip.Request, tx sip.ServerTransaction) {
-		s.OnNoRoute(req, tx)
-	})
+	s.sipSrv.OnOptions(s.onOptions)
+	s.sipSrv.OnInvite(s.onInvite)
+	s.sipSrv.OnAck(s.onAck)
+	s.sipSrv.OnBye(s.onBye)
+	s.sipSrv.OnNotify(s.onNotify)
+	s.sipSrv.OnNoRoute(s.OnNoRoute)
 	s.sipUnhandled = unhandled
 
 	listenIP := s.conf.ListenIP

@@ -6,6 +6,7 @@ ignore ./tmp/references
 
 require (
 	github.com/at-wat/ebml-go v0.17.1
+	github.com/emiago/sipgo v0.24.1
 	github.com/frostbyte73/core v0.1.1
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/icholy/digest v1.1.0
@@ -16,7 +17,6 @@ require (
 	github.com/livekit/protocol v1.43.3-0.20251202235353-eec8df247cf9
 	github.com/livekit/psrpc v0.7.1
 	github.com/livekit/server-sdk-go/v2 v2.11.4-0.20251016050252-63f7c8381817
-	github.com/livekit/sipgo v0.13.2-0.20250601220430-a77cc3f220fb
 	github.com/mjibson/go-dsp v0.0.0-20180508042940-11479a337f12
 	github.com/ory/dockertest/v3 v3.12.0
 	github.com/pion/interceptor v0.1.41
@@ -65,7 +65,6 @@ require (
 	github.com/docker/docker v28.3.3+incompatible // indirect
 	github.com/docker/go-connections v0.5.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
-	github.com/emiago/sipgo v0.24.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/gammazero/deque v1.1.0 // indirect
 	github.com/go-jose/go-jose/v3 v3.0.4 // indirect

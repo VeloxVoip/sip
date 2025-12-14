@@ -37,14 +37,14 @@ import (
 	"github.com/icholy/digest"
 	"github.com/pion/sdp/v3"
 
+	"github.com/emiago/sipgo"
+	"github.com/emiago/sipgo/sip"
 	msdk "github.com/livekit/media-sdk"
 	"github.com/livekit/media-sdk/dtmf"
 	"github.com/livekit/media-sdk/g711"
 	"github.com/livekit/media-sdk/rtp"
 	lksdp "github.com/livekit/media-sdk/sdp"
 	webmm "github.com/livekit/media-sdk/webm"
-	"github.com/livekit/sipgo"
-	"github.com/livekit/sipgo/sip"
 
 	"github.com/livekit/media-sdk/mixer"
 	"github.com/livekit/sip/pkg/audiotest"
@@ -131,7 +131,6 @@ func NewClient(id string, conf ClientConfig) (*Client, error) {
 
 	ua, err := sipgo.NewUA(
 		sipgo.WithUserAgent(conf.Number),
-		sipgo.WithUserAgentLogger(cli.log),
 	)
 	if err != nil {
 		cli.Close()
@@ -151,20 +150,20 @@ func NewClient(id string, conf ClientConfig) (*Client, error) {
 		return nil, err
 	}
 
-	cli.sipServer.OnBye(func(log *slog.Logger, req *sip.Request, tx sip.ServerTransaction) {
+	cli.sipServer.OnBye(func(req *sip.Request, tx sip.ServerTransaction) {
 		_ = tx.Respond(sip.NewResponseFromRequest(req, 200, "OK", nil))
 		tx.Terminate()
 		if conf.OnBye != nil {
 			conf.OnBye()
 		}
 	})
-	cli.sipServer.OnAck(func(log *slog.Logger, req *sip.Request, tx sip.ServerTransaction) {
+	cli.sipServer.OnAck(func(req *sip.Request, tx sip.ServerTransaction) {
 		select {
 		case cli.ack <- struct{}{}:
 		default:
 		}
 	})
-	cli.sipServer.OnRefer(func(log *slog.Logger, req *sip.Request, tx sip.ServerTransaction) {
+	cli.sipServer.OnRefer(func(req *sip.Request, tx sip.ServerTransaction) {
 		if conf.OnRefer != nil {
 			conf.OnRefer(req)
 		}
@@ -404,7 +403,7 @@ func (c *Client) attemptInvite(ip, host, number string, offer []byte, authHeader
 		req.AppendHeader(sip.NewHeader(k, v))
 	}
 
-	tx, err := c.sipClient.TransactionRequest(req)
+	tx, err := c.sipClient.TransactionRequest(context.Background(), req)
 	if err != nil {
 		panic(err)
 	}
@@ -417,14 +416,36 @@ func (c *Client) attemptInvite(ip, host, number string, offer []byte, authHeader
 
 func (c *Client) sendBye() {
 	c.log.Debug("sending bye")
-	req := sip.NewByeRequest(c.inviteReq, c.inviteResp, nil)
+	req := sip.NewRequest(sip.BYE, c.inviteResp.Contact().Address)
+	// Set up BYE request headers similar to NewByeRequest
+	req.SipVersion = c.inviteReq.SipVersion
+	if len(c.inviteReq.GetHeaders("Route")) > 0 {
+		sip.CopyHeaders("Route", c.inviteReq, req)
+	}
+	maxForwardsHeader := sip.MaxForwardsHeader(70)
+	req.AppendHeader(&maxForwardsHeader)
+	if h := c.inviteReq.From(); h != nil {
+		req.AppendHeader(sip.HeaderClone(h))
+	}
+	if h := c.inviteResp.To(); h != nil {
+		req.AppendHeader(sip.HeaderClone(h))
+	}
+	if h := c.inviteReq.CallID(); h != nil {
+		req.AppendHeader(sip.HeaderClone(h))
+	}
+	if h := c.inviteReq.CSeq(); h != nil {
+		req.AppendHeader(sip.HeaderClone(h))
+	}
+	cseqH := req.CSeq()
+	if cseqH != nil {
+		cseqH.MethodName = sip.BYE
+		cseqH.SeqNo = c.lastCSeq.Add(1)
+	}
+	req.SetTransport(c.inviteReq.Transport())
+	req.SetSource(c.inviteReq.Source())
 	req.AppendHeader(sip.NewHeader("User-Agent", "LiveKit"))
 
-	cseq := c.lastCSeq.Add(1)
-	cseqH := req.CSeq()
-	cseqH.SeqNo = cseq
-
-	tx, err := c.sipClient.TransactionRequest(req)
+	tx, err := c.sipClient.TransactionRequest(context.Background(), req)
 	if err != nil {
 		return
 	}
@@ -518,7 +539,7 @@ func (c *Client) SendNotify(eventReq *sip.Request, notifyStatus string) error {
 
 	req.SetBody([]byte(notifyStatus))
 
-	tx, err := c.sipClient.TransactionRequest(req)
+	tx, err := c.sipClient.TransactionRequest(context.Background(), req)
 	if err != nil {
 		return err
 	}

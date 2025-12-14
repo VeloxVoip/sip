@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/livekit/sipgo/sip"
+	"github.com/emiago/sipgo/sip"
 	"github.com/stretchr/testify/require"
 )
 

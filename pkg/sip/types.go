@@ -22,10 +22,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/emiago/sipgo/sip"
 	"github.com/livekit/media-sdk/sdp"
 	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/protocol/logger"
-	"github.com/livekit/sipgo/sip"
 )
 
 type Headers []sip.Header

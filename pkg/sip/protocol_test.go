@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/livekit/sipgo/sip"
+	"github.com/emiago/sipgo/sip"
 )
 
 func TestHandleNotify(t *testing.T) {

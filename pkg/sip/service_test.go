@@ -3,7 +3,6 @@ package sip
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"math/rand"
 	"testing"
 	"time"
@@ -13,12 +12,12 @@ import (
 	msdk "github.com/livekit/media-sdk"
 	"github.com/stretchr/testify/require"
 
+	"github.com/emiago/sipgo"
+	"github.com/emiago/sipgo/sip"
 	"github.com/livekit/mediatransportutil/pkg/rtcconfig"
 	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/protocol/logger"
 	"github.com/livekit/protocol/rpc"
-	"github.com/livekit/sipgo"
-	"github.com/livekit/sipgo/sip"
 
 	"github.com/livekit/media-sdk/sdp"
 
@@ -119,7 +118,6 @@ func testInvite(t *testing.T, h Handler, hidden bool, from, to string, test func
 
 	sipUserAgent, err := sipgo.NewUA(
 		sipgo.WithUserAgent(from),
-		sipgo.WithUserAgentLogger(slog.New(logger.ToSlogHandler(s.log))),
 	)
 	require.NoError(t, err)
 
@@ -137,7 +135,7 @@ func testInvite(t *testing.T, h Handler, hidden bool, from, to string, test func
 	inviteRequest.SetBody(offerData)
 	inviteRequest.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
 
-	tx, err := sipClient.TransactionRequest(inviteRequest)
+	tx, err := sipClient.TransactionRequest(context.Background(), inviteRequest)
 	require.NoError(t, err)
 	t.Cleanup(tx.Terminate)
 
@@ -343,13 +341,11 @@ func TestDigestAuthSimultaneousCalls(t *testing.T) {
 	// Create two SIP clients for simultaneous calls
 	sipUserAgent1, err := sipgo.NewUA(
 		sipgo.WithUserAgent(sameFromUser),
-		sipgo.WithUserAgentLogger(slog.New(logger.ToSlogHandler(s.log))),
 	)
 	require.NoError(t, err)
 
 	sipUserAgent2, err := sipgo.NewUA(
 		sipgo.WithUserAgent(sameFromUser),
-		sipgo.WithUserAgentLogger(slog.New(logger.ToSlogHandler(s.log))),
 	)
 	require.NoError(t, err)
 
@@ -388,11 +384,11 @@ func TestDigestAuthSimultaneousCalls(t *testing.T) {
 	inviteRequest2.AppendHeader(sip.NewHeader("Call-ID", "call2-456@test.com"))
 
 	// Start both transactions simultaneously
-	tx1, err := sipClient1.TransactionRequest(inviteRequest1)
+	tx1, err := sipClient1.TransactionRequest(context.Background(), inviteRequest1)
 	require.NoError(t, err)
 	t.Cleanup(tx1.Terminate)
 
-	tx2, err := sipClient2.TransactionRequest(inviteRequest2)
+	tx2, err := sipClient2.TransactionRequest(context.Background(), inviteRequest2)
 	require.NoError(t, err)
 	t.Cleanup(tx2.Terminate)
 
@@ -459,11 +455,11 @@ func TestDigestAuthSimultaneousCalls(t *testing.T) {
 	authInviteRequest2.AppendHeader(sip.NewHeader("Proxy-Authorization", cred2.String()))
 
 	// Send authenticated requests
-	authTx1, err := sipClient1.TransactionRequest(authInviteRequest1)
+	authTx1, err := sipClient1.TransactionRequest(context.Background(), authInviteRequest1)
 	require.NoError(t, err)
 	t.Cleanup(authTx1.Terminate)
 
-	authTx2, err := sipClient2.TransactionRequest(authInviteRequest2)
+	authTx2, err := sipClient2.TransactionRequest(context.Background(), authInviteRequest2)
 	require.NoError(t, err)
 	t.Cleanup(authTx2.Terminate)
 
@@ -547,7 +543,6 @@ func TestDigestAuthStandardFlow(t *testing.T) {
 
 	sipUserAgent, err := sipgo.NewUA(
 		sipgo.WithUserAgent(fromUser),
-		sipgo.WithUserAgentLogger(slog.New(logger.ToSlogHandler(s.log))),
 	)
 	require.NoError(t, err)
 
@@ -567,7 +562,7 @@ func TestDigestAuthStandardFlow(t *testing.T) {
 	inviteRequest1.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
 	inviteRequest1.AppendHeader(sip.NewHeader("Call-ID", callID))
 
-	tx1, err := sipClient.TransactionRequest(inviteRequest1)
+	tx1, err := sipClient.TransactionRequest(context.Background(), inviteRequest1)
 	require.NoError(t, err)
 	t.Cleanup(tx1.Terminate)
 
@@ -603,7 +598,7 @@ func TestDigestAuthStandardFlow(t *testing.T) {
 	inviteRequest2.AppendHeader(sip.NewHeader("Call-ID", callID))
 	inviteRequest2.AppendHeader(sip.NewHeader("Proxy-Authorization", cred.String()))
 
-	tx2, err := sipClient.TransactionRequest(inviteRequest2)
+	tx2, err := sipClient.TransactionRequest(context.Background(), inviteRequest2)
 	require.NoError(t, err)
 	t.Cleanup(tx2.Terminate)
 
@@ -704,7 +699,7 @@ func TestCANCELSendsBothResponses(t *testing.T) {
 	inviteRequest.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
 
 	// Send INVITE
-	tx, err := sipClient.TransactionRequest(inviteRequest)
+	tx, err := sipClient.TransactionRequest(context.Background(), inviteRequest)
 	require.NoError(t, err)
 	t.Cleanup(tx.Terminate)
 
@@ -717,7 +712,7 @@ func TestCANCELSendsBothResponses(t *testing.T) {
 	require.Equal(t, sip.StatusCode(180), res180.StatusCode, "Should receive 180 Ringing")
 
 	// Now send CANCEL
-	err = tx.Cancel()
+	tx.Terminate()
 	require.NoError(t, err, "Should be able to send CANCEL")
 
 	// On-the-wire there should be two responses after CANCEL:

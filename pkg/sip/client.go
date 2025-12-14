@@ -16,7 +16,6 @@ package sip
 
 import (
 	"context"
-	"log/slog"
 	"net/netip"
 	"strings"
 	"sync"
@@ -25,14 +24,14 @@ import (
 	"github.com/frostbyte73/core"
 	"golang.org/x/exp/maps"
 
+	"github.com/emiago/sipgo"
+	"github.com/emiago/sipgo/sip"
 	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/protocol/logger"
 	"github.com/livekit/protocol/rpc"
 	"github.com/livekit/protocol/tracer"
 	"github.com/livekit/protocol/utils/traceid"
 	"github.com/livekit/psrpc"
-	"github.com/livekit/sipgo"
-	"github.com/livekit/sipgo/sip"
 
 	"github.com/livekit/sip/pkg/config"
 	siperrors "github.com/livekit/sip/pkg/errors"
@@ -42,7 +41,7 @@ import (
 // An interface mirroring sipgo.Client to be able to mock it in tests.
 // Note: *sipgo.Client implements this interface directly, so no wrapper is needed.
 type SIPClient interface {
-	TransactionRequest(req *sip.Request, options ...sipgo.ClientRequestOption) (sip.ClientTransaction, error)
+	TransactionRequest(ctx context.Context, req *sip.Request, options ...sipgo.ClientRequestOption) (sip.ClientTransaction, error)
 	WriteRequest(req *sip.Request, options ...sipgo.ClientRequestOption) error
 	Close() error
 }
@@ -119,7 +118,6 @@ func (c *Client) Start(agent *sipgo.UserAgent, sc *ServiceConfig) error {
 	if agent == nil {
 		ua, err := sipgo.NewUA(
 			sipgo.WithUserAgent(UserAgent),
-			sipgo.WithUserAgentLogger(slog.New(logger.ToSlogHandler(c.log))),
 		)
 		if err != nil {
 			return err
@@ -130,7 +128,6 @@ func (c *Client) Start(agent *sipgo.UserAgent, sc *ServiceConfig) error {
 	var err error
 	c.sipCli, err = c.getSipClient(agent,
 		sipgo.WithClientHostname(c.sconf.SignalingIP.String()),
-		sipgo.WithClientLogger(slog.New(logger.ToSlogHandler(c.log))),
 	)
 	if err != nil {
 		return err

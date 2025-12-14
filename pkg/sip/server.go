@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"net/netip"
 	"sync"
@@ -31,13 +30,13 @@ import (
 	"github.com/icholy/digest"
 	"golang.org/x/exp/maps"
 
+	"github.com/emiago/sipgo"
+	"github.com/emiago/sipgo/sip"
 	msdk "github.com/livekit/media-sdk"
 	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/protocol/logger"
 	"github.com/livekit/protocol/rpc"
 	"github.com/livekit/protocol/utils/traceid"
-	"github.com/livekit/sipgo"
-	"github.com/livekit/sipgo/sip"
 
 	"github.com/livekit/sip/pkg/config"
 	"github.com/livekit/sip/pkg/stats"
@@ -283,7 +282,6 @@ func (s *Server) Start(agent *sipgo.UserAgent, sc *ServiceConfig, tlsConf *tls.C
 	if agent == nil {
 		ua, err := sipgo.NewUA(
 			sipgo.WithUserAgent(UserAgent),
-			sipgo.WithUserAgentLogger(slog.New(logger.ToSlogHandler(s.log))),
 		)
 		if err != nil {
 			return err
@@ -292,19 +290,29 @@ func (s *Server) Start(agent *sipgo.UserAgent, sc *ServiceConfig, tlsConf *tls.C
 	}
 
 	var err error
-	s.sipSrv, err = sipgo.NewServer(agent,
-		sipgo.WithServerLogger(slog.New(logger.ToSlogHandler(s.log))),
-	)
+	s.sipSrv, err = sipgo.NewServer(agent)
 	if err != nil {
 		return err
 	}
 
-	s.sipSrv.OnOptions(s.onOptions)
-	s.sipSrv.OnInvite(s.onInvite)
-	s.sipSrv.OnAck(s.onAck)
-	s.sipSrv.OnBye(s.onBye)
-	s.sipSrv.OnNotify(s.onNotify)
-	s.sipSrv.OnNoRoute(s.OnNoRoute)
+	s.sipSrv.OnOptions(func(req *sip.Request, tx sip.ServerTransaction) {
+		s.onOptions(req, tx)
+	})
+	s.sipSrv.OnInvite(func(req *sip.Request, tx sip.ServerTransaction) {
+		s.onInvite(req, tx)
+	})
+	s.sipSrv.OnAck(func(req *sip.Request, tx sip.ServerTransaction) {
+		s.onAck(req, tx)
+	})
+	s.sipSrv.OnBye(func(req *sip.Request, tx sip.ServerTransaction) {
+		s.onBye(req, tx)
+	})
+	s.sipSrv.OnNotify(func(req *sip.Request, tx sip.ServerTransaction) {
+		s.onNotify(req, tx)
+	})
+	s.sipSrv.OnNoRoute(func(req *sip.Request, tx sip.ServerTransaction) {
+		s.OnNoRoute(req, tx)
+	})
 	s.sipUnhandled = unhandled
 
 	listenIP := s.conf.ListenIP

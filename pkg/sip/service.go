@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"net/netip"
 	"os"
@@ -31,12 +30,12 @@ import (
 
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	"github.com/emiago/sipgo"
 	msdk "github.com/livekit/media-sdk"
 	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/protocol/logger"
 	"github.com/livekit/protocol/rpc"
 	"github.com/livekit/psrpc"
-	"github.com/livekit/sipgo"
 
 	"github.com/livekit/sip/pkg/config"
 	siperrors "github.com/livekit/sip/pkg/errors"
@@ -212,7 +211,6 @@ func (s *Service) Start() error {
 	// to pass even without forwarding rules on the firewall. ut it will inevitably fail later on follow-up requests like BYE.
 	var opts = []sipgo.UserAgentOption{
 		sipgo.WithUserAgent(UserAgent),
-		sipgo.WithUserAgentLogger(slog.New(logger.ToSlogHandler(s.log))),
 	}
 	var tlsConf *tls.Config
 	if tconf := s.conf.TLS; tconf != nil {

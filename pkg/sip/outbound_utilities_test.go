@@ -24,13 +24,13 @@ import (
 
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	"github.com/emiago/sipgo"
+	"github.com/emiago/sipgo/sip"
 	"github.com/livekit/mediatransportutil/pkg/rtcconfig"
 	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/protocol/logger"
 	"github.com/livekit/protocol/rpc"
 	"github.com/livekit/psrpc"
-	"github.com/livekit/sipgo"
-	"github.com/livekit/sipgo/sip"
 
 	msdk "github.com/livekit/media-sdk"
 	"github.com/livekit/media-sdk/dtmf"
@@ -363,7 +363,7 @@ func (w *testSIPClient) FillRequestBlanks(req *sip.Request) {
 	}
 }
 
-func (w *testSIPClient) TransactionRequest(req *sip.Request, options ...sipgo.ClientRequestOption) (sip.ClientTransaction, error) {
+func (w *testSIPClient) TransactionRequest(ctx context.Context, req *sip.Request, options ...sipgo.ClientRequestOption) (sip.ClientTransaction, error) {
 	if len(options) > 0 {
 		panic("options not supported for testSIPClient")
 	}

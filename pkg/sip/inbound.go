@@ -19,7 +19,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"log/slog"
 	"math"
 	"net/netip"
 	"slices"
@@ -32,6 +31,7 @@ import (
 	"github.com/icholy/digest"
 	"github.com/pkg/errors"
 
+	"github.com/emiago/sipgo/sip"
 	msdk "github.com/livekit/media-sdk"
 	"github.com/livekit/media-sdk/dtmf"
 	"github.com/livekit/media-sdk/rtp"
@@ -45,7 +45,6 @@ import (
 	"github.com/livekit/protocol/utils/traceid"
 	"github.com/livekit/psrpc"
 	lksdk "github.com/livekit/server-sdk-go/v2"
-	"github.com/livekit/sipgo/sip"
 
 	"github.com/livekit/sip/pkg/config"
 	"github.com/livekit/sip/pkg/stats"
@@ -275,7 +274,7 @@ func (s *Server) handleInviteAuth(tid traceid.ID, log logger.Logger, req *sip.Re
 	return true
 }
 
-func (s *Server) onInvite(log *slog.Logger, req *sip.Request, tx sip.ServerTransaction) {
+func (s *Server) onInvite(req *sip.Request, tx sip.ServerTransaction) {
 	// Error processed in defer
 	_ = s.processInvite(req, tx)
 }
@@ -464,11 +463,11 @@ func (s *Server) processInvite(req *sip.Request, tx sip.ServerTransaction) (retE
 	return call.handleInvite(call.ctx, tid, req, r.TrunkID, s.conf)
 }
 
-func (s *Server) onOptions(log *slog.Logger, req *sip.Request, tx sip.ServerTransaction) {
+func (s *Server) onOptions(req *sip.Request, tx sip.ServerTransaction) {
 	_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil))
 }
 
-func (s *Server) onAck(log *slog.Logger, req *sip.Request, tx sip.ServerTransaction) {
+func (s *Server) onAck(req *sip.Request, tx sip.ServerTransaction) {
 	tag, err := getFromTag(req)
 	if err != nil {
 		return
@@ -483,7 +482,7 @@ func (s *Server) onAck(log *slog.Logger, req *sip.Request, tx sip.ServerTransact
 	c.cc.AcceptAck(req, tx)
 }
 
-func (s *Server) onBye(log *slog.Logger, req *sip.Request, tx sip.ServerTransaction) {
+func (s *Server) onBye(req *sip.Request, tx sip.ServerTransaction) {
 	tag, err := getFromTag(req)
 	if err != nil {
 		_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusBadRequest, "", nil))
@@ -525,7 +524,7 @@ func (s *Server) onBye(log *slog.Logger, req *sip.Request, tx sip.ServerTransact
 	}
 }
 
-func (s *Server) OnNoRoute(log *slog.Logger, req *sip.Request, tx sip.ServerTransaction) {
+func (s *Server) OnNoRoute(req *sip.Request, tx sip.ServerTransaction) {
 	callID := ""
 	if h := req.CallID(); h != nil {
 		callID = h.Value()
@@ -546,7 +545,7 @@ func (s *Server) OnNoRoute(log *slog.Logger, req *sip.Request, tx sip.ServerTran
 	tx.Respond(sip.NewResponseFromRequest(req, 405, "Method Not Allowed", nil))
 }
 
-func (s *Server) onNotify(log *slog.Logger, req *sip.Request, tx sip.ServerTransaction) {
+func (s *Server) onNotify(req *sip.Request, tx sip.ServerTransaction) {
 	tag, err := getFromTag(req)
 	if err != nil {
 		_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusBadRequest, "", nil))
@@ -1575,7 +1574,6 @@ func (c *sipInbound) StartRinging() {
 	stop := make(chan struct{})
 	c.ringing = stop
 	tx := c.inviteTx
-	cancels := tx.Cancels()
 	go func() {
 		ticker := time.NewTicker(c.s.conf.SIPRingingInterval)
 		defer ticker.Stop()
@@ -1583,10 +1581,17 @@ func (c *sipInbound) StartRinging() {
 			select {
 			case <-stop:
 				return
-			case r := <-cancels:
-				close(c.cancelled)
-				_ = tx.Respond(sip.NewResponseFromRequest(r, sip.StatusOK, "OK", nil))
-				c.RespondAndDrop(sip.StatusRequestTerminated, "Request Terminated")
+			case <-tx.Done():
+				// Check if transaction was canceled
+				err := tx.Err()
+				if err != nil {
+					// Check for transaction canceled error
+					if err.Error() == "transaction canceled" || errors.Is(err, sip.ErrTransactionCanceled) {
+						close(c.cancelled)
+						c.RespondAndDrop(sip.StatusRequestTerminated, "Request Terminated")
+						return
+					}
+				}
 				return
 			case <-ticker.C:
 			}
@@ -1787,7 +1792,7 @@ func (c *sipInbound) sendBye() {
 	_, span := tracer.Start(ctx, "sipInbound.sendBye")
 	defer span.End()
 	// This function is for clients, so we need to swap src and dest
-	r := sip.NewByeRequest(c.invite, c.inviteOk, nil)
+	r := NewByeRequest(c.invite, c.inviteOk, nil)
 	if c.setHeaders != nil {
 		for k, v := range c.setHeaders(nil) {
 			r.AppendHeader(sip.NewHeader(k, v))
@@ -1827,8 +1832,8 @@ func (c *sipInbound) WriteRequest(req *sip.Request) error {
 	return c.s.sipSrv.TransportLayer().WriteMsg(req)
 }
 
-func (c *sipInbound) Transaction(req *sip.Request) (sip.ClientTransaction, error) {
-	return c.s.sipSrv.TransactionLayer().Request(req)
+func (c *sipInbound) Transaction(ctx context.Context, req *sip.Request) (sip.ClientTransaction, error) {
+	return c.s.sipSrv.TransactionLayer().Request(ctx, req)
 }
 
 func (c *sipInbound) newReferReq(transferTo string, headers map[string]string) (*sip.Request, error) {

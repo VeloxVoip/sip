@@ -25,9 +25,9 @@ import (
 
 	"github.com/pkg/errors"
 
+	"github.com/emiago/sipgo/sip"
 	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/psrpc"
-	"github.com/livekit/sipgo/sip"
 
 	"github.com/livekit/sip/pkg/config"
 )
@@ -124,7 +124,7 @@ type Signaling interface {
 	RemoteHeaders() Headers
 
 	WriteRequest(req *sip.Request) error
-	Transaction(req *sip.Request) (sip.ClientTransaction, error)
+	Transaction(ctx context.Context, req *sip.Request) (sip.ClientTransaction, error)
 
 	Drop()
 }
@@ -195,7 +195,7 @@ func getContactURI(c *config.Config, ip netip.Addr, t Transport) URI {
 }
 
 func sendAndACK(ctx context.Context, c Signaling, req *sip.Request) {
-	tx, err := c.Transaction(req)
+	tx, err := c.Transaction(ctx, req)
 	if err != nil {
 		return
 	}
@@ -207,6 +207,48 @@ func sendAndACK(ctx context.Context, c Signaling, req *sip.Request) {
 	if r.StatusCode == 200 {
 		_ = c.WriteRequest(sip.NewAckRequest(req, r, nil))
 	}
+}
+
+// NewByeRequest creates a BYE request from an established dialog (INVITE request and response)
+func NewByeRequest(inviteRequest *sip.Request, inviteResponse *sip.Response, body []byte) *sip.Request {
+	recipient := &inviteRequest.Recipient
+	if cont := inviteResponse.Contact(); cont != nil {
+		recipient = &cont.Address
+	}
+
+	byeRequest := sip.NewRequest(sip.BYE, *recipient.Clone())
+	byeRequest.SipVersion = inviteRequest.SipVersion
+
+	if len(inviteRequest.GetHeaders("Route")) > 0 {
+		sip.CopyHeaders("Route", inviteRequest, byeRequest)
+	}
+
+	maxForwardsHeader := sip.MaxForwardsHeader(70)
+	byeRequest.AppendHeader(&maxForwardsHeader)
+
+	if h := inviteRequest.From(); h != nil {
+		byeRequest.AppendHeader(sip.HeaderClone(h))
+	}
+
+	if h := inviteResponse.To(); h != nil {
+		byeRequest.AppendHeader(sip.HeaderClone(h))
+	}
+
+	if h := inviteRequest.CallID(); h != nil {
+		byeRequest.AppendHeader(sip.HeaderClone(h))
+	}
+
+	if h := inviteRequest.CSeq(); h != nil {
+		byeRequest.AppendHeader(sip.HeaderClone(h))
+	}
+
+	cseq := byeRequest.CSeq()
+	cseq.MethodName = sip.BYE
+
+	byeRequest.SetBody(body)
+	byeRequest.SetTransport(inviteRequest.Transport())
+	byeRequest.SetSource(inviteRequest.Source())
+	return byeRequest
 }
 
 func NewReferRequest(inviteRequest *sip.Request, inviteResponse *sip.Response, contactHeader *sip.ContactHeader, referToUrl string, headers map[string]string) *sip.Request {
@@ -279,7 +321,7 @@ func NewReferRequest(inviteRequest *sip.Request, inviteResponse *sip.Response, c
 }
 
 func sendRefer(ctx context.Context, c Signaling, req *sip.Request, stop <-chan struct{}) (*sip.Response, error) {
-	tx, err := c.Transaction(req)
+	tx, err := c.Transaction(ctx, req)
 	if err != nil {
 		return nil, err
 	}

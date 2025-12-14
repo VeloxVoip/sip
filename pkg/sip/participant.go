@@ -17,8 +17,8 @@ package sip
 import (
 	"time"
 
+	"github.com/emiago/sipgo/sip"
 	"github.com/livekit/protocol/livekit"
-	"github.com/livekit/sipgo/sip"
 )
 
 const (

@@ -1,12 +1,12 @@
 # AI-First SIP Server
 
 <!--BEGIN_DESCRIPTION-->
-A production-ready SIP server designed for AI agents, enabling voice over IP capabilities through complete SIP protocol implementation.
+A production-ready SIP server designed for AI agents, enabling voice over IP capabilities through complete SIP network implementation.
 <!--END_DESCRIPTION-->
 
 ## Overview
 
-This is a full-featured SIP (Session Initiation Protocol) server written in Go, purpose-built for AI agents. It provides complete SIP protocol implementation with voice over IP (VoIP) capabilities, enabling AI agents to make and receive phone calls through traditional telephony networks. Built with Go, it offers high performance and reliability for AI-powered voice applications.
+This is a full-featured SIP (Session Initiation network) server written in Go, purpose-built for AI agents. It provides complete SIP network implementation with voice over IP (VoIP) capabilities, enabling AI agents to make and receive phone calls through traditional telephony networks. Built with Go, it offers high performance and reliability for AI-powered voice applications.
 
 ### Use Cases
 - **AI Agent Voice Capabilities**: Enable AI agents to make and receive phone calls
@@ -16,15 +16,15 @@ This is a full-featured SIP (Session Initiation Protocol) server written in Go, 
 
 ## Features
 
-A production-ready SIP server with comprehensive protocol support, designed for AI agent integration:
+A production-ready SIP server with comprehensive network support, designed for AI agent integration:
 
-**SIP Protocol Features:**
+**SIP network Features:**
 - Full SIP (RFC 3261) implementation
 - Inbound calls (Accepting INVITEs)
 - Outbound calls (Sending INVITEs)
 - Digest Authentication
 - DTMF support (Sending and Receiving)
-- Multiple transport protocols (UDP, TCP, TLS, WebSocket, Secure WebSocket)
+- Multiple transport networks (UDP, TCP, TLS, WebSocket, Secure WebSocket)
 
 **Media & Audio:**
 - RTP/RTCP media handling
@@ -60,7 +60,7 @@ As a SIP server, it handles standard SIP call flows while enabling AI agents to 
 ### Architecture
 
 **SIP Server Core:**
-- Full SIP protocol stack (RFC 3261) with transaction management
+- Full SIP network stack (RFC 3261) with transaction management
 - Multiple transport support (UDP, TCP, TLS, WebSocket, Secure WebSocket)
 - RTP/RTCP media handling for audio streams
 - Digest authentication and security features
@@ -74,7 +74,7 @@ The SIP server acts as a bridge between AI agents and traditional telephony netw
 
 **Infrastructure:**
 - **Redis**: Used for session state management, distributed coordination, and call routing configuration across multiple AI agent instances
-- **SIP Transport Endpoints**: Multiple protocols for maximum compatibility with SIP trunks and carriers
+- **SIP Transport Endpoints**: Multiple networks for maximum compatibility with SIP trunks and carriers
 - **RTP Media Ports**: Default range 10000-20000 for audio streams
 - **Monitoring**: HTTP endpoints for health checks and Prometheus metrics
 
@@ -93,29 +93,29 @@ redis:
 # Transports for SIP (supports multiple simultaneous transports)
 transports:
   # UDP transport (standard SIP)
-  - protocol: "udp"
+  - network: "udp"
     bind: 0.0.0.0
     port: 5060
 
   # TCP transport
-  - protocol: "tcp"
+  - network: "tcp"
     bind: 0.0.0.0
     port: 5060
 
   # TLS transport (SIPS)
-  - protocol: "tls"
+  - network: "tls"
     bind: 0.0.0.0
     port: 5061
 
   # Secure WebSocket for WebRTC users
-  - protocol: "wss"
+  - network: "wss"
     bind: 0.0.0.0
     port: 8443
 
   # WebSocket for WebRTC users
-  - protocol: "ws"
+  - network: "ws"
     bind: 0.0.0.0
-    port: 8081
+    port: 8080
 
 # RTP media settings
 rtp_port: RTP media port range (default: 10000-20000)
@@ -136,7 +136,7 @@ The config file can be added to a mounted volume with its location passed in the
 ## Technical Details
 
 - **Language**: Go 1.25+
-- **Protocols**: SIP (RFC 3261), RTP, RTCP
+- **networks**: SIP (RFC 3261), RTP, RTCP
 - **Codecs**: Opus (via libopus) for high-quality voice compression
 - **Transports**: UDP, TCP, TLS, WebSocket (WS), Secure WebSocket (WSS)
 - **Dependencies**: Redis (for distributed state management)
@@ -222,7 +222,7 @@ docker run --rm \
 
 ## AI Agent Integration
 
-This SIP server is designed to be integrated with AI agent frameworks. The server handles all SIP protocol details, allowing AI agents to focus on:
+This SIP server is designed to be integrated with AI agent frameworks. The server handles all SIP network details, allowing AI agents to focus on:
 - Processing incoming audio streams
 - Generating natural voice responses
 - Managing conversation state

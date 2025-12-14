@@ -37,8 +37,8 @@ import (
 
 	"github.com/livekit/media-sdk/mixer"
 
-	"github.com/livekit/sip/pkg/config"
-	"github.com/livekit/sip/pkg/media/opus"
+	"github.com/veloxvoip/sip/pkg/config"
+	"github.com/veloxvoip/sip/pkg/media/opus"
 )
 
 type RoomStatsSnapshot struct {

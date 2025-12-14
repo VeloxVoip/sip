@@ -36,8 +36,8 @@ import (
 	lksdk "github.com/livekit/server-sdk-go/v2"
 
 	"github.com/livekit/media-sdk/mixer"
-	"github.com/livekit/sip/pkg/audiotest"
-	"github.com/livekit/sip/pkg/media/opus"
+	"github.com/veloxvoip/sip/pkg/audiotest"
+	"github.com/veloxvoip/sip/pkg/media/opus"
 )
 
 const (

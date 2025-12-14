@@ -37,8 +37,8 @@ import (
 	"github.com/livekit/media-sdk/mixer"
 	"github.com/livekit/media-sdk/rtp"
 	lksdk "github.com/livekit/server-sdk-go/v2"
-	"github.com/livekit/sip/pkg/config"
-	"github.com/livekit/sip/pkg/stats"
+	"github.com/veloxvoip/sip/pkg/config"
+	"github.com/veloxvoip/sip/pkg/stats"
 )
 
 // MockIOInfoClient is a no-op implementation of rpc.IOInfoClient for testing

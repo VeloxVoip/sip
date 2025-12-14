@@ -15,7 +15,7 @@ import (
 	"github.com/livekit/protocol/redis"
 	lksdk "github.com/livekit/server-sdk-go/v2"
 
-	"github.com/livekit/sip/test/lktest"
+	"github.com/veloxvoip/sip/test/lktest"
 )
 
 var debugLKServer = os.Getenv("DEBUG_LK_SERVER") != ""

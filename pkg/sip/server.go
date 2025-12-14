@@ -38,8 +38,8 @@ import (
 	"github.com/livekit/protocol/rpc"
 	"github.com/livekit/protocol/utils/traceid"
 
-	"github.com/livekit/sip/pkg/config"
-	"github.com/livekit/sip/pkg/stats"
+	"github.com/veloxvoip/sip/pkg/config"
+	"github.com/veloxvoip/sip/pkg/stats"
 )
 
 const (

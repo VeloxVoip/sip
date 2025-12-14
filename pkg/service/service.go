@@ -33,11 +33,11 @@ import (
 	"github.com/livekit/protocol/rpc"
 	"github.com/livekit/psrpc"
 
-	"github.com/livekit/sip/pkg/stats"
+	"github.com/veloxvoip/sip/pkg/stats"
 
-	"github.com/livekit/sip/pkg/config"
-	"github.com/livekit/sip/pkg/sip"
-	"github.com/livekit/sip/version"
+	"github.com/veloxvoip/sip/pkg/config"
+	"github.com/veloxvoip/sip/pkg/sip"
+	"github.com/veloxvoip/sip/version"
 )
 
 type sipServiceStopFunc func()

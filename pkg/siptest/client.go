@@ -47,9 +47,9 @@ import (
 	webmm "github.com/livekit/media-sdk/webm"
 
 	"github.com/livekit/media-sdk/mixer"
-	"github.com/livekit/sip/pkg/audiotest"
-	"github.com/livekit/sip/pkg/config"
-	"github.com/livekit/sip/pkg/media/rtpconn"
+	"github.com/veloxvoip/sip/pkg/audiotest"
+	"github.com/veloxvoip/sip/pkg/config"
+	"github.com/veloxvoip/sip/pkg/media/rtpconn"
 )
 
 type ClientConfig struct {

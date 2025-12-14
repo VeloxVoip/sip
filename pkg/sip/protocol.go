@@ -29,7 +29,7 @@ import (
 	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/psrpc"
 
-	"github.com/livekit/sip/pkg/config"
+	"github.com/veloxvoip/sip/pkg/config"
 )
 
 const (

@@ -7,7 +7,7 @@ import (
 	"github.com/livekit/protocol/logger"
 	"github.com/livekit/protocol/rpc"
 	"github.com/livekit/protocol/tracer"
-	"github.com/livekit/sip/pkg/sip"
+	"github.com/veloxvoip/sip/pkg/sip"
 )
 
 func GetAuthCredentials(ctx context.Context, psrpcClient rpc.IOInfoClient, call *rpc.SIPCall) (sip.AuthInfo, error) {

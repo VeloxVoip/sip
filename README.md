@@ -256,6 +256,6 @@ The server provides clean APIs for:
 
 ## Acknowledgments
 
-This project is based on [LiveKit's SIP](https://github.com/livekit/sip) project. Special thanks to [LiveKit](https://github.com/livekit) and all the contributors for their excellent work on the original SIP to WebRTC bridge implementation.
+This project is based on [LiveKit's SIP](https://github.com/veloxvoip/sip) project. Special thanks to [LiveKit](https://github.com/livekit) and all the contributors for their excellent work on the original SIP to WebRTC bridge implementation.
 
 This project uses [emiago/sipgo](https://github.com/emiago/sipgo), an amazing SIP library for writing fast SIP services in Go, created by [emiago](https://github.com/emiago).

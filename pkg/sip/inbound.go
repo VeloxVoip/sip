@@ -46,9 +46,9 @@ import (
 	"github.com/livekit/psrpc"
 	lksdk "github.com/livekit/server-sdk-go/v2"
 
-	"github.com/livekit/sip/pkg/config"
-	"github.com/livekit/sip/pkg/stats"
-	"github.com/livekit/sip/res"
+	"github.com/veloxvoip/sip/pkg/config"
+	"github.com/veloxvoip/sip/pkg/stats"
+	"github.com/veloxvoip/sip/res"
 )
 
 const (
@@ -1138,7 +1138,7 @@ func (c *inboundCall) close(error bool, status CallStatus, reason string) {
 	// Send BYE _before_ closing media/room connection.
 	// This ensures participant attributes are still available for
 	// attributes_to_headers mapping in the setHeaders callback.
-	// See: https://github.com/livekit/sip/issues/404
+	// See: https://github.com/veloxvoip/sip/issues/404
 	c.cc.CloseWithStatus(sipCode, sipStatus)
 	c.closeMedia()
 	if c.callDur != nil {

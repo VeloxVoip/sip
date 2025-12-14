@@ -33,9 +33,9 @@ import (
 	"github.com/livekit/protocol/utils/traceid"
 	"github.com/livekit/psrpc"
 
-	"github.com/livekit/sip/pkg/config"
-	siperrors "github.com/livekit/sip/pkg/errors"
-	"github.com/livekit/sip/pkg/stats"
+	"github.com/veloxvoip/sip/pkg/config"
+	siperrors "github.com/veloxvoip/sip/pkg/errors"
+	"github.com/veloxvoip/sip/pkg/stats"
 )
 
 // An interface mirroring sipgo.Client to be able to mock it in tests.

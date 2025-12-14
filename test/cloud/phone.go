@@ -8,7 +8,7 @@ import (
 	"github.com/livekit/media-sdk/dtmf"
 	"github.com/livekit/media-sdk/g711"
 
-	"github.com/livekit/sip/pkg/siptest"
+	"github.com/veloxvoip/sip/pkg/siptest"
 )
 
 const (

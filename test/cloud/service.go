@@ -4,9 +4,9 @@ import (
 	"github.com/livekit/protocol/logger"
 	"github.com/livekit/protocol/rpc"
 	"github.com/livekit/psrpc"
-	"github.com/livekit/sip/pkg/service"
-	"github.com/livekit/sip/pkg/sip"
-	"github.com/livekit/sip/pkg/stats"
+	"github.com/veloxvoip/sip/pkg/service"
+	"github.com/veloxvoip/sip/pkg/sip"
+	"github.com/veloxvoip/sip/pkg/stats"
 )
 
 func NewService(conf *IntegrationConfig, bus psrpc.MessageBus) (*service.Service, error) {

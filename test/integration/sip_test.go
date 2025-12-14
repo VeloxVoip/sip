@@ -28,12 +28,12 @@ import (
 	"github.com/livekit/psrpc"
 	lksdk "github.com/livekit/server-sdk-go/v2"
 
-	"github.com/livekit/sip/pkg/config"
-	"github.com/livekit/sip/pkg/service"
-	"github.com/livekit/sip/pkg/sip"
-	"github.com/livekit/sip/pkg/siptest"
-	"github.com/livekit/sip/pkg/stats"
-	"github.com/livekit/sip/test/lktest"
+	"github.com/veloxvoip/sip/pkg/config"
+	"github.com/veloxvoip/sip/pkg/service"
+	"github.com/veloxvoip/sip/pkg/sip"
+	"github.com/veloxvoip/sip/pkg/siptest"
+	"github.com/veloxvoip/sip/pkg/stats"
+	"github.com/veloxvoip/sip/test/lktest"
 )
 
 type SIPServer struct {

@@ -29,7 +29,7 @@ import (
 	"github.com/livekit/media-sdk/rtp"
 
 	"github.com/livekit/protocol/logger"
-	"github.com/livekit/sip/pkg/stats"
+	"github.com/veloxvoip/sip/pkg/stats"
 )
 
 var _ json.Marshaler = (*Stats)(nil)

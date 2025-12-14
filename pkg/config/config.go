@@ -32,7 +32,7 @@ import (
 	"github.com/livekit/psrpc"
 	lksdk "github.com/livekit/server-sdk-go/v2"
 
-	"github.com/livekit/sip/pkg/errors"
+	"github.com/veloxvoip/sip/pkg/errors"
 )
 
 const (

@@ -23,8 +23,8 @@ import (
 
 	"github.com/livekit/mediatransportutil/pkg/rtcconfig"
 	"github.com/livekit/protocol/logger"
-	"github.com/livekit/sip/pkg/config"
 	"github.com/pkg/errors"
+	"github.com/veloxvoip/sip/pkg/config"
 )
 
 func GetServiceConfig(conf *config.Config) (*ServiceConfig, error) {

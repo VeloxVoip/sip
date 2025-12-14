@@ -1,4 +1,4 @@
-module github.com/livekit/sip
+module github.com/veloxvoip/sip
 
 go 1.25.0
 

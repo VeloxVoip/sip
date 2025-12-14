@@ -3,7 +3,7 @@ package cloud
 import (
 	"os"
 
-	"github.com/livekit/sip/pkg/config"
+	"github.com/veloxvoip/sip/pkg/config"
 )
 
 const (

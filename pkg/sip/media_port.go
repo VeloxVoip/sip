@@ -38,7 +38,7 @@ import (
 	"github.com/livekit/protocol/logger"
 	"github.com/livekit/protocol/utils/traceid"
 
-	"github.com/livekit/sip/pkg/stats"
+	"github.com/veloxvoip/sip/pkg/stats"
 )
 
 const (

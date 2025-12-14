@@ -1,61 +1,82 @@
-# SIP Service
+# AI-First SIP Server
 
 <!--BEGIN_DESCRIPTION-->
-A full-featured SIP server written in Go.
+A production-ready SIP server designed for AI agents, enabling voice over IP capabilities through complete SIP protocol implementation.
 <!--END_DESCRIPTION-->
 
 ## Overview
 
-This SIP service provides a complete implementation of the Session Initiation Protocol (SIP) for handling voice communications. Built with Go, it offers high performance and reliability for telephony applications.
+This is a full-featured SIP (Session Initiation Protocol) server written in Go, purpose-built for AI agents. It provides complete SIP protocol implementation with voice over IP (VoIP) capabilities, enabling AI agents to make and receive phone calls through traditional telephony networks. Built with Go, it offers high performance and reliability for AI-powered voice applications.
 
 ### Use Cases
-- SIP trunking and telephony gateway
-- Integration with real-time communication platforms
-- VoIP service infrastructure
-- Call routing and management systems
+- **AI Agent Voice Capabilities**: Enable AI agents to make and receive phone calls
+- **Voice-Enabled AI Applications**: Integrate voice communication into AI-powered services
+- **AI Telephony Gateway**: Connect AI agents to traditional phone networks via SIP trunks
+- **Real-time Voice AI**: Support real-time voice interactions for conversational AI systems
 
 ## Features
 
-A production-ready SIP service with the following capabilities:
+A production-ready SIP server with comprehensive protocol support, designed for AI agent integration:
+
+**SIP Protocol Features:**
+- Full SIP (RFC 3261) implementation
 - Inbound calls (Accepting INVITEs)
 - Outbound calls (Sending INVITEs)
 - Digest Authentication
 - DTMF support (Sending and Receiving)
 - Multiple transport protocols (UDP, TCP, TLS, WebSocket, Secure WebSocket)
-- RTP media handling
-- Opus audio codec support
-- Redis-based session management
-- Health checks and Prometheus metrics
+
+**Media & Audio:**
+- RTP/RTCP media handling
+- Real-time audio streaming for voice interactions
+- Opus audio codec support for high-quality voice communication
+
+**AI Agent Integration:**
+- Designed for seamless AI agent integration
+- Real-time bidirectional audio streaming for natural voice conversations
+- Redis-based session management for distributed AI agent deployments
+- Health checks and Prometheus metrics for monitoring AI agent call performance
 
 ## Getting Started
 
 ### Basic Workflow
 
-The SIP service handles both inbound and outbound calls:
+As a SIP server, it handles standard SIP call flows while enabling AI agents to participate in voice calls:
 
-**Inbound Calls:**
-1. Configure SIP trunks and dispatch rules
-2. Server receives incoming INVITE requests
-3. Authenticates and routes calls based on configuration
-4. Establishes media sessions via RTP
+**Inbound Calls (AI Agent Receives Calls):**
+1. Configure SIP trunks and dispatch rules for your AI agents
+2. Server receives incoming INVITE requests from phone networks
+3. Authenticates and routes calls to the appropriate AI agent
+4. Establishes media sessions via RTP for real-time voice streaming
+5. AI agent processes audio and responds in real-time
 
-**Outbound Calls:**
-1. Initiate calls through the API
-2. Server sends INVITE requests to destination
+**Outbound Calls (AI Agent Makes Calls):**
+1. AI agent initiates calls through the API
+2. Server sends INVITE requests to destination phone numbers
 3. Handles call establishment and media negotiation
 4. Manages call lifecycle until termination
+5. AI agent can speak and listen throughout the call
 
 ### Architecture
 
-The SIP service uses Redis for:
-- Session state management
-- Distributed coordination
-- Call routing configuration
+**SIP Server Core:**
+- Full SIP protocol stack (RFC 3261) with transaction management
+- Multiple transport support (UDP, TCP, TLS, WebSocket, Secure WebSocket)
+- RTP/RTCP media handling for audio streams
+- Digest authentication and security features
+- DTMF support for interactive voice systems
 
-The server exposes:
-- Multiple SIP transport endpoints (UDP, TCP, TLS, WebSocket, Secure WebSocket)
-- RTP media ports (default: 10000-20000) for audio streams
-- HTTP endpoints for health checks and metrics
+**AI Agent Integration:**
+The SIP server acts as a bridge between AI agents and traditional telephony networks, enabling:
+- Real-time bidirectional audio streaming for natural voice conversations
+- Seamless integration with AI agent frameworks and LLM services
+- Scalable architecture supporting multiple concurrent AI agent calls
+
+**Infrastructure:**
+- **Redis**: Used for session state management, distributed coordination, and call routing configuration across multiple AI agent instances
+- **SIP Transport Endpoints**: Multiple protocols for maximum compatibility with SIP trunks and carriers
+- **RTP Media Ports**: Default range 10000-20000 for audio streams
+- **Monitoring**: HTTP endpoints for health checks and Prometheus metrics
 
 ### Configuration
 
@@ -117,18 +138,19 @@ The config file can be added to a mounted volume with its location passed in the
 
 ## Technical Details
 
-- **Language**: Go 1.18+
+- **Language**: Go 1.25+
 - **Protocols**: SIP (RFC 3261), RTP, RTCP
-- **Codecs**: Opus (via libopus)
+- **Codecs**: Opus (via libopus) for high-quality voice compression
 - **Transports**: UDP, TCP, TLS, WebSocket (WS), Secure WebSocket (WSS)
-- **Dependencies**: Redis (for state management)
+- **Dependencies**: Redis (for distributed state management)
+- **SIP Library**: Built on [emiago/sipgo](https://github.com/emiago/sipgo) for fast, reliable SIP handling
 
 ## Quick Start
 
 ### Prerequisites
-- Go 1.18 or later
-- Redis server
-- libopus development libraries
+- Go 1.25 or later
+- Redis server (for distributed AI agent session management)
+- libopus development libraries (for high-quality voice codec)
 
 ### Installation
 
@@ -152,7 +174,7 @@ For more instructions see [hraban/opus' README](https://github.com/hraban/opus#b
 
 #### Running natively
 
-The SIP service can be run natively on any platform supported by libopus.
+The SIP server can be run natively on any platform supported by libopus, enabling AI agents to make and receive voice calls.
 
 Create a file named `config.yaml` with the following content:
 
@@ -201,8 +223,42 @@ docker run --rm \
     ghcr.io/veloxvoip/sip
 ```
 
+## AI Agent Integration
+
+This SIP server is designed to be integrated with AI agent frameworks. The server handles all SIP protocol details, allowing AI agents to focus on:
+- Processing incoming audio streams
+- Generating natural voice responses
+- Managing conversation state
+- Handling call flows and routing logic
+
+The server provides clean APIs for:
+- Initiating outbound calls from AI agents
+- Receiving inbound calls and routing to AI agents
+- Real-time audio streaming (bidirectional)
+- Call management and lifecycle control
+
+### Example Use Cases
+
+**Customer Service AI Agent:**
+- Receives inbound calls from customers
+- Processes voice input in real-time
+- Generates natural voice responses
+- Handles complex call flows and transfers
+
+**Outbound AI Agent:**
+- Initiates calls to phone numbers
+- Delivers personalized voice messages
+- Collects information via voice interactions
+- Manages call outcomes and follow-ups
+
+**Voice-Enabled AI Assistant:**
+- Connects to traditional phone networks
+- Provides voice interface for AI capabilities
+- Supports multi-turn conversations
+- Integrates with LLM services for intelligent responses
+
 ## Acknowledgments
 
 This project is based on [LiveKit's SIP](https://github.com/livekit/sip) project. Special thanks to [LiveKit](https://github.com/livekit) and all the contributors for their excellent work on the original SIP to WebRTC bridge implementation.
 
-This project also uses [sipgo](https://github.com/emiago/sipgo), an amazing SIP library for writing fast SIP services in Go, created by [emiago](https://github.com/emiago).
+This project uses [emiago/sipgo](https://github.com/emiago/sipgo), an amazing SIP library for writing fast SIP services in Go, created by [emiago](https://github.com/emiago).

@@ -31,8 +31,6 @@ func NewCloudTestService(conf *IntegrationConfig, bus psrpc.MessageBus) (*CloudT
 
 func (s *CloudTestService) CreateSIPParticipant(ctx context.Context, req *livekit.CreateSIPParticipantRequest) (*livekit.SIPParticipantInfo, error) {
 	token, err := sip.BuildSIPToken(sip.SIPTokenParams{
-		APIKey:                s.conf.ApiKey,
-		APISecret:             s.conf.ApiSecret,
 		RoomName:              req.RoomName,
 		ParticipantIdentity:   req.ParticipantIdentity,
 		ParticipantName:       req.ParticipantName,
@@ -46,7 +44,7 @@ func (s *CloudTestService) CreateSIPParticipant(ctx context.Context, req *liveki
 
 	callID := sip.NewCallID()
 	trunk := &livekit.SIPOutboundTrunkInfo{}
-	r, err := rpc.NewCreateSIPParticipantRequest(ProjectID, callID, Host, s.conf.WsUrl, token, req, trunk)
+	r, err := rpc.NewCreateSIPParticipantRequest(ProjectID, callID, Host, "", token, req, trunk)
 	if err != nil {
 		logger.Errorw("failed to build CreateSIPParticipantRequest", err)
 		return nil, err

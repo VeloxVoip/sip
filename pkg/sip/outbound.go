@@ -28,25 +28,22 @@ import (
 	"golang.org/x/exp/maps"
 
 	"github.com/emiago/sipgo/sip"
-	msdk "github.com/livekit/media-sdk"
 	"github.com/livekit/media-sdk/dtmf"
 	"github.com/livekit/media-sdk/sdp"
 	"github.com/livekit/media-sdk/tones"
 	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/protocol/logger"
-	"github.com/livekit/protocol/tracer"
 	"github.com/livekit/protocol/utils/guid"
 	"github.com/livekit/protocol/utils/traceid"
-	"github.com/livekit/psrpc"
-	lksdk "github.com/livekit/server-sdk-go/v2"
 
-	"github.com/livekit/sip/pkg/config"
-	"github.com/livekit/sip/pkg/stats"
+	"github.com/veloxvoip/sip/pkg/config"
+	"github.com/veloxvoip/sip/pkg/stats"
+	"github.com/veloxvoip/sip/pkg/tracer"
 )
 
 type sipOutboundConfig struct {
 	address         string
-	transport       livekit.SIPTransport
+	transport       livekit.SIPTransport // TODO: Convert to SIPTransport
 	host            string
 	from            string
 	to              string
@@ -55,12 +52,12 @@ type sipOutboundConfig struct {
 	dtmf            string
 	dialtone        bool
 	headers         map[string]string
-	includeHeaders  livekit.SIPHeaderOptions
+	includeHeaders  HeaderOptions
 	headersToAttrs  map[string]string
 	attrsToHeaders  map[string]string
 	ringingTimeout  time.Duration
 	maxCallDuration time.Duration
-	enabledFeatures []livekit.SIPFeature
+	enabledFeatures []SIPFeature
 	mediaEncryption sdp.Encryption
 	displayName     *string
 }
@@ -80,14 +77,13 @@ type outboundCall struct {
 	jitterBuf bool
 	projectID string
 
-	mu       sync.RWMutex
-	mon      *stats.CallMonitor
-	lkRoom   RoomInterface
-	lkRoomIn msdk.PCM16Writer // output to room; OPUS at 48k
-	sipConf  sipOutboundConfig
+	mu      sync.RWMutex
+	mon     *stats.CallMonitor
+	sipConf sipOutboundConfig
+	// lkRoom and lkRoomIn removed - no longer using LiveKit rooms
 }
 
-func (c *Client) newCall(ctx context.Context, tid traceid.ID, conf *config.Config, log logger.Logger, id LocalTag, room RoomConfig, sipConf sipOutboundConfig, state *CallState, projectID string) (*outboundCall, error) {
+func (c *Client) newCall(ctx context.Context, tid traceid.ID, conf *config.Config, log logger.Logger, id LocalTag, sipConf sipOutboundConfig, state *CallState, projectID string) (*outboundCall, error) {
 	if sipConf.maxCallDuration <= 0 || sipConf.maxCallDuration > maxCallDuration {
 		sipConf.maxCallDuration = maxCallDuration
 	}
@@ -95,7 +91,7 @@ func (c *Client) newCall(ctx context.Context, tid traceid.ID, conf *config.Confi
 		sipConf.ringingTimeout = defaultRingingTimeout
 	}
 	jitterBuf := SelectValueBool(conf.EnableJitterBuffer, conf.EnableJitterBufferProb)
-	room.JitterBuf = jitterBuf
+	// Room config removed - no longer using LiveKit rooms
 
 	tr := TransportFrom(sipConf.transport)
 	contact := c.ContactURI(tr)
@@ -120,15 +116,9 @@ func (c *Client) newCall(ctx context.Context, tid traceid.ID, conf *config.Confi
 		Addr:      contact.Addr,
 		Transport: tr,
 	}, contact, sipConf.displayName, func(headers map[string]string) map[string]string {
-		c := call
-		if len(c.sipConf.attrsToHeaders) == 0 {
-			return headers
-		}
-		r := c.lkRoom.Room()
-		if r == nil {
-			return headers
-		}
-		return AttrsToHeaders(r.LocalParticipant.Attributes(), c.sipConf.attrsToHeaders, headers)
+		// For B2B bridging, headers are returned as-is
+		// No room attributes to map
+		return headers
 	})
 
 	call.mon = c.mon.NewCall(stats.Outbound, sipConf.host, sipConf.address)
@@ -141,8 +131,8 @@ func (c *Client) newCall(ctx context.Context, tid traceid.ID, conf *config.Confi
 		MediaTimeout:        c.conf.MediaTimeout,
 		EnableJitterBuffer:  call.jitterBuf,
 		Stats:               &call.stats.Port,
-		NoInputResample:     !RoomResample,
-	}, RoomSampleRate)
+		NoInputResample:     !DialogResample,
+	}, DialogSampleRate)
 	if err != nil {
 		call.close(errors.Wrap(err, "media failed"), callDropped, "media-failed", livekit.DisconnectReason_UNKNOWN_REASON)
 		return nil, err
@@ -150,10 +140,8 @@ func (c *Client) newCall(ctx context.Context, tid traceid.ID, conf *config.Confi
 	call.media.SetDTMFAudio(conf.AudioDTMF)
 	call.media.EnableTimeout(false)
 	call.media.DisableOut() // disabled until we get 200
-	if err := call.connectToRoom(ctx, room, c.getRoom); err != nil {
-		call.close(errors.Wrap(err, "room join failed"), callDropped, "join-failed", livekit.DisconnectReason_UNKNOWN_REASON)
-		return nil, fmt.Errorf("update room failed: %w", err)
-	}
+	// Room connection removed - no longer using LiveKit rooms
+	// For B2B bridging, media is handled directly via MediaPort
 
 	c.cmu.Lock()
 	defer c.cmu.Unlock()
@@ -168,12 +156,7 @@ func (c *outboundCall) ensureClosed(ctx context.Context) {
 		} else {
 			info.CallStatus = livekit.SIPCallStatus_SCS_DISCONNECTED
 		}
-		if r := c.lkRoom.Room(); r != nil {
-			if p := r.LocalParticipant; p != nil {
-				info.ParticipantIdentity = p.Identity()
-				info.ParticipantAttributes = p.Attributes()
-			}
-		}
+		// Room participant info removed - no longer using LiveKit rooms
 		info.EndedAtNs = time.Now().UnixNano()
 	})
 }
@@ -205,12 +188,7 @@ func (c *outboundCall) Dial(ctx context.Context) error {
 	}
 
 	c.state.Update(ctx, func(info *livekit.SIPCallInfo) {
-		lkroom := c.lkRoom.Room()
-		if lkroom == nil {
-			c.log.Errorw("failed to update SIP info", fmt.Errorf("unexpected state: lkroom is not set"))
-			return
-		}
-		info.RoomId = lkroom.SID()
+		// Room info removed - no longer using LiveKit rooms
 		info.StartedAtNs = time.Now().UnixNano()
 		info.CallStatus = livekit.SIPCallStatus_SCS_ACTIVE
 	})
@@ -242,7 +220,7 @@ func (c *outboundCall) waitClose(ctx context.Context, tid traceid.ID) error {
 			return nil
 		case <-c.media.Timeout():
 			c.closeWithTimeout()
-			err := psrpc.NewErrorf(psrpc.DeadlineExceeded, "media timeout")
+			err := ErrDeadlineExceeded("media timeout")
 			c.setErrStatus(ctx, err)
 			return err
 		case <-c.Closed():
@@ -266,7 +244,8 @@ func (c *outboundCall) Closed() <-chan struct{} {
 }
 
 func (c *outboundCall) Disconnected() <-chan struct{} {
-	return c.lkRoom.Closed()
+	// For B2B bridging, use call's closing channel instead of room
+	return c.closing.Watch()
 }
 
 func (c *outboundCall) Close() error {
@@ -286,7 +265,7 @@ func (c *outboundCall) CloseWithReason(status CallStatus, description string, re
 func (c *outboundCall) closeWithTimeout() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.close(psrpc.NewErrorf(psrpc.DeadlineExceeded, "media-timeout"), callDropped, "media-timeout", livekit.DisconnectReason_UNKNOWN_REASON)
+	c.close(ErrDeadlineExceeded("media-timeout"), callDropped, "media-timeout", livekit.DisconnectReason_UNKNOWN_REASON)
 }
 
 func (c *outboundCall) printStats() {
@@ -315,18 +294,11 @@ func (c *outboundCall) close(err error, status CallStatus, description string, r
 			info.DisconnectReason = reason
 		})
 
-		// Send BYE _before_ closing media/room connection.
-		// This ensures participant attributes are still available for
-		// attributes_to_headers mapping in the setHeaders callback.
-		// See: https://github.com/livekit/sip/issues/404
+		// Send BYE _before_ closing media connection
 		c.stopSIP(description)
 		c.media.Close()
 
-		if r := c.lkRoom; r != nil {
-			_ = r.CloseOutput()
-			_ = r.CloseWithReason(status.DisconnectReason())
-		}
-		c.lkRoomIn = nil
+		// Room cleanup removed - no longer using LiveKit rooms
 
 		c.c.cmu.Lock()
 		delete(c.c.activeCalls, c.cc.ID())
@@ -349,12 +321,6 @@ func (c *outboundCall) close(err error, status CallStatus, description string, r
 			}(c.tid)
 		}
 	})
-}
-
-func (c *outboundCall) Participant() ParticipantInfo {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.lkRoom.Participant()
 }
 
 func (c *outboundCall) connectSIP(ctx context.Context, tid traceid.ID) error {
@@ -383,66 +349,17 @@ func (c *outboundCall) connectSIP(ctx context.Context, tid traceid.ID) error {
 	}
 	c.connectMedia()
 	c.started.Break()
-	c.lkRoom.Subscribe()
+	// Room subscription removed - no longer using LiveKit rooms
 	c.log.Infow("Outbound SIP call established")
 	return nil
 }
 
-func (c *outboundCall) connectToRoom(ctx context.Context, lkNew RoomConfig, getRoom GetRoomFunc) error {
-	ctx, span := tracer.Start(ctx, "outboundCall.connectToRoom")
-	defer span.End()
-	attrs := lkNew.Participant.Attributes
-	if attrs == nil {
-		attrs = make(map[string]string)
-	}
-
-	sipCallID := attrs[livekit.AttrSIPCallID]
-	if sipCallID != "" {
-		c.c.RegisterTransferSIPParticipant(sipCallID, c)
-	}
-
-	attrs[livekit.AttrSIPCallStatus] = CallDialing.Attribute()
-	lkNew.Participant.Attributes = attrs
-	r := getRoom(c.log, &c.stats.Room)
-	if err := r.Connect(c.c.conf, lkNew); err != nil {
-		_ = r.Close()
-		return err
-	}
-	// We have to create the track early because we might play a dialtone while SIP connects.
-	// Thus, we are forced to set full sample rate here instead of letting the codec adapt to the SIP source sample rate.
-	local, err := r.NewParticipantTrack(RoomSampleRate)
-	if err != nil {
-		_ = r.Close()
-		return err
-	}
-	c.lkRoom = r
-	c.lkRoomIn = local
-	return nil
-}
+// connectToRoom removed - no longer using LiveKit rooms
+// For B2B bridging, media is handled directly via MediaPort
 
 func (c *outboundCall) dialSIP(ctx context.Context, tid traceid.ID) error {
-	if c.sipConf.dialtone {
-		const ringVolume = math.MaxInt16 / 2
-		rctx, rcancel := context.WithCancel(ctx)
-		defer rcancel()
-
-		dst := c.lkRoomIn // already under mutex
-
-		// Play dialtone to the room while participant connects
-		go func(tid traceid.ID) {
-			rctx, span := tracer.Start(rctx, "tones.Play")
-			defer span.End()
-
-			if dst == nil {
-				c.log.Infow("room is not ready, ignoring dial tone")
-				return
-			}
-			err := tones.Play(rctx, dst, ringVolume, tones.ETSIRinging)
-			if err != nil && !errors.Is(err, context.Canceled) {
-				c.log.Infow("cannot play dial tone", "error", err)
-			}
-		}(tid)
-	}
+	// Dialtone removed - no longer using LiveKit rooms
+	// For B2B bridging, dialtone can be played directly to media if needed
 	err := c.sipSignal(ctx, tid)
 	if err != nil {
 		return err
@@ -461,12 +378,8 @@ func (c *outboundCall) dialSIP(ctx context.Context, tid traceid.ID) error {
 }
 
 func (c *outboundCall) connectMedia() {
-	if w := c.lkRoom.SwapOutput(c.media.GetAudioWriter()); w != nil {
-		_ = w.Close()
-	}
-	c.lkRoom.SetDTMFOutput(c.media)
-
-	c.media.WriteAudioTo(c.lkRoomIn)
+	// For B2B bridging, media is handled directly via MediaPort
+	// No room output swapping needed
 	c.media.HandleDTMF(c.handleDTMF)
 }
 
@@ -478,12 +391,12 @@ func sipResponse(ctx context.Context, tx sip.ClientTransaction, stop <-chan stru
 		select {
 		case <-ctx.Done():
 			tx.Terminate()
-			return nil, psrpc.NewErrorf(psrpc.Canceled, "canceled")
+			return nil, ErrCanceled("canceled")
 		case <-stop:
 			tx.Terminate()
-			return nil, psrpc.NewErrorf(psrpc.Canceled, "canceled")
+			return nil, ErrCanceled("canceled")
 		case <-tx.Done():
-			return nil, psrpc.NewErrorf(psrpc.Canceled, "transaction failed to complete (%d intermediate responses)", cnt)
+			return nil, ErrCanceled("transaction failed to complete")
 		case res := <-tx.Responses():
 			status := res.StatusCode
 			if setState != nil {
@@ -504,32 +417,13 @@ func (c *outboundCall) stopSIP(reason string) {
 }
 
 func (c *outboundCall) setStatus(v CallStatus) {
-	attr := v.Attribute()
-	if attr == "" {
-		return
-	}
-	if c.lkRoom == nil {
-		return
-	}
-	r := c.lkRoom.Room()
-	if r == nil {
-		return
-	}
-	r.LocalParticipant.SetAttributes(map[string]string{
-		livekit.AttrSIPCallStatus: attr,
-	})
+	// Room status updates removed - no longer using LiveKit rooms
+	// Status is tracked in CallState for B2B bridging
 }
 
-func (c *outboundCall) setExtraAttrs(hdrToAttr map[string]string, opts livekit.SIPHeaderOptions, cc Signaling, hdrs Headers) {
-	extra := HeadersToAttrs(nil, hdrToAttr, opts, cc, hdrs)
-	if c.lkRoom != nil && len(extra) != 0 {
-		room := c.lkRoom.Room()
-		if room != nil {
-			room.LocalParticipant.SetAttributes(extra)
-		} else {
-			c.log.Warnw("could not set attributes on nil room", nil, "attrs", extra)
-		}
-	}
+func (c *outboundCall) setExtraAttrs(hdrToAttr map[string]string, opts HeaderOptions, cc Signaling, hdrs Headers) {
+	// Room attributes removed - no longer using LiveKit rooms
+	// Attributes are handled via SIP headers in B2B bridging
 }
 
 func (c *outboundCall) sipSignal(ctx context.Context, tid traceid.ID) error {
@@ -628,21 +522,14 @@ func (c *outboundCall) sipSignal(ctx context.Context, tid traceid.ID) error {
 	c.setExtraAttrs(c.sipConf.headersToAttrs, c.sipConf.includeHeaders, c.cc, nil)
 	c.state.DeferUpdate(func(info *livekit.SIPCallInfo) {
 		info.AudioCodec = mc.Audio.Codec.Info().SDPName
-		if r := c.lkRoom.Room(); r != nil {
-			info.ParticipantAttributes = r.LocalParticipant.Attributes()
-		}
+		// Participant attributes removed - no longer using LiveKit rooms
 	})
 	return nil
 }
 
 func (c *outboundCall) handleDTMF(ev dtmf.Event) {
-	if c.lkRoom == nil {
-		return
-	}
-	_ = c.lkRoom.SendData(&livekit.SipDTMF{
-		Code:  uint32(ev.Code),
-		Digit: string([]byte{ev.Digit}),
-	}, lksdk.WithDataPublishReliable(true))
+	// DTMF handling for rooms removed - no longer using LiveKit rooms
+	// For B2B bridging, DTMF is forwarded directly via media proxy
 }
 
 func (c *outboundCall) transferCall(ctx context.Context, transferTo string, headers map[string]string, dialtone bool) (retErr error) {
@@ -658,16 +545,8 @@ func (c *outboundCall) transferCall(ctx context.Context, transferTo string, head
 		rctx, rcancel := context.WithCancel(ctx)
 		defer rcancel()
 
-		// mute the room audio to the SIP participant
-		w := c.lkRoom.SwapOutput(nil)
-
-		defer func() {
-			if retErr != nil && !c.stopped.IsBroken() {
-				c.lkRoom.SwapOutput(w)
-			} else {
-				w.Close()
-			}
-		}()
+		// Room audio muting removed - no longer using LiveKit rooms
+		// For B2B bridging, audio is handled directly via MediaPort
 
 		go func() {
 			aw := c.media.GetAudioWriter()
@@ -1018,12 +897,12 @@ func (c *sipOutbound) transferCall(ctx context.Context, transferTo string, heade
 
 	if c.invite == nil || c.inviteOk == nil {
 		c.mu.Unlock()
-		return psrpc.NewErrorf(psrpc.FailedPrecondition, "can't transfer non established call") // call wasn't established
+		return ErrFailedPrecondition("can't transfer non established call") // call wasn't established
 	}
 
 	if c.c.closing.IsBroken() {
 		c.mu.Unlock()
-		return psrpc.NewErrorf(psrpc.FailedPrecondition, "can't transfer hung up call")
+		return ErrFailedPrecondition("can't transfer hung up call")
 	}
 
 	if c.getHeaders != nil {
@@ -1036,7 +915,7 @@ func (c *sipOutbound) transferCall(ctx context.Context, transferTo string, heade
 
 	if cseq == nil {
 		c.mu.Unlock()
-		return psrpc.NewErrorf(psrpc.Internal, "missing CSeq header in REFER request")
+		return ErrInternal("missing CSeq header in REFER request")
 	}
 	c.referCseq = cseq.SeqNo
 	c.mu.Unlock()
@@ -1048,7 +927,7 @@ func (c *sipOutbound) transferCall(ctx context.Context, transferTo string, heade
 
 	select {
 	case <-ctx.Done():
-		return psrpc.NewErrorf(psrpc.Canceled, "refer canceled")
+		return ErrCanceled("refer canceled")
 	case err := <-c.referDone:
 		if err != nil {
 			return err

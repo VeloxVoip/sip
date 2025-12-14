@@ -38,7 +38,7 @@ import (
 	"github.com/livekit/protocol/logger"
 	"github.com/livekit/protocol/utils/traceid"
 
-	"github.com/livekit/sip/pkg/stats"
+	"github.com/veloxvoip/sip/pkg/stats"
 )
 
 const (
@@ -225,6 +225,58 @@ type MediaOptions struct {
 	Stats               *PortStats
 	EnableJitterBuffer  bool
 	NoInputResample     bool
+}
+
+// MediaPortOption is a functional option for configuring a MediaPort
+type MediaPortOption func(*MediaOptions)
+
+// WithMediaIP sets the external IP address for media
+func WithMediaIP(ip netip.Addr) MediaPortOption {
+	return func(opts *MediaOptions) {
+		opts.IP = ip
+	}
+}
+
+// WithMediaPorts sets the port range for RTP
+func WithMediaPorts(ports rtcconfig.PortRange) MediaPortOption {
+	return func(opts *MediaOptions) {
+		opts.Ports = ports
+	}
+}
+
+// WithMediaTimeouts sets the media timeout durations
+func WithMediaTimeouts(initial, general time.Duration) MediaPortOption {
+	return func(opts *MediaOptions) {
+		if initial > 0 {
+			opts.MediaTimeoutInitial = initial
+		}
+		if general > 0 {
+			opts.MediaTimeout = general
+		}
+	}
+}
+
+// WithMediaStats sets the stats collector
+func WithMediaStats(stats *PortStats) MediaPortOption {
+	return func(opts *MediaOptions) {
+		if stats != nil {
+			opts.Stats = stats
+		}
+	}
+}
+
+// WithJitterBuffer enables or disables jitter buffer
+func WithJitterBuffer(enabled bool) MediaPortOption {
+	return func(opts *MediaOptions) {
+		opts.EnableJitterBuffer = enabled
+	}
+}
+
+// WithInputResample enables or disables input resampling
+func WithInputResample(enabled bool) MediaPortOption {
+	return func(opts *MediaOptions) {
+		opts.NoInputResample = !enabled
+	}
 }
 
 func NewMediaPort(tid traceid.ID, log logger.Logger, mon *stats.CallMonitor, opts *MediaOptions, sampleRate int) (*MediaPort, error) {
@@ -530,6 +582,42 @@ func (p *MediaPort) WriteAudioTo(w msdk.PCM16Writer) {
 // GetAudioWriter returns audio writer that will send PCM to the destination via RTP.
 func (p *MediaPort) GetAudioWriter() msdk.PCM16Writer {
 	return p.audioOut
+}
+
+// GetRTPHandler returns the current RTP handler for incoming packets.
+// This can be used to intercept and forward RTP packets for B2B bridging.
+func (p *MediaPort) GetRTPHandler() rtp.HandlerCloser {
+	ptr := p.hnd.Load()
+	if ptr == nil {
+		return nil
+	}
+	return *ptr
+}
+
+// SetRTPHandler sets a custom RTP handler for incoming packets.
+// This allows direct RTP-level bridging without PCM conversion.
+// The handler will be wrapped with NopCloser if needed.
+func (p *MediaPort) SetRTPHandler(h rtp.Handler) {
+	if h == nil {
+		p.hnd.Store(nil)
+		return
+	}
+	// Wrap handler as HandlerCloser if it isn't already
+	var hc rtp.HandlerCloser
+	if closer, ok := h.(rtp.HandlerCloser); ok {
+		hc = closer
+	} else {
+		hc = rtp.NewNopCloser(h)
+	}
+	p.hnd.Store(&hc)
+}
+
+// GetRTPWriter returns the RTP write stream for sending packets.
+// This can be used to forward RTP packets directly for B2B bridging.
+func (p *MediaPort) GetRTPWriter() *rtp.Stream {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.audioOutRTP
 }
 
 // NewOffer generates an SDP offer for the media.

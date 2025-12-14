@@ -18,233 +18,47 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync/atomic"
 	"testing"
 	"time"
-
-	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 	"github.com/livekit/mediatransportutil/pkg/rtcconfig"
-	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/protocol/logger"
-	"github.com/livekit/protocol/rpc"
-	"github.com/livekit/psrpc"
 
-	msdk "github.com/livekit/media-sdk"
-	"github.com/livekit/media-sdk/dtmf"
-	"github.com/livekit/media-sdk/mixer"
-	"github.com/livekit/media-sdk/rtp"
-	lksdk "github.com/livekit/server-sdk-go/v2"
-	"github.com/livekit/sip/pkg/config"
-	"github.com/livekit/sip/pkg/stats"
+	"github.com/veloxvoip/sip/pkg/config"
+	"github.com/veloxvoip/sip/pkg/stats"
 )
 
 // MockIOInfoClient is a no-op implementation of rpc.IOInfoClient for testing
 type MockIOInfoClient struct{}
 
 // Egress methods
-func (m *MockIOInfoClient) CreateEgress(ctx context.Context, req *livekit.EgressInfo, opts ...psrpc.RequestOption) (*emptypb.Empty, error) {
-	return &emptypb.Empty{}, nil
+// MockAuthClient is a no-op implementation of AuthClient for testing
+type MockAuthClient struct{}
+
+func (m *MockAuthClient) GetAuthCredentials(ctx context.Context, call *SIPCall) (*AuthResponse, error) {
+	return &AuthResponse{
+		Result: AuthAccept,
+	}, nil
 }
 
-func (m *MockIOInfoClient) UpdateEgress(ctx context.Context, req *livekit.EgressInfo, opts ...psrpc.RequestOption) (*emptypb.Empty, error) {
-	return &emptypb.Empty{}, nil
+func (m *MockAuthClient) EvaluateDispatchRules(ctx context.Context, req *DispatchRequest) (*DispatchResponse, error) {
+	return &DispatchResponse{
+		Result: DispatchAccept,
+		ToUri: &SIPURI{
+			User:      "test",
+			Host:      "example.com",
+			Port:      5060,
+			Transport: SIPTransportUDP,
+		},
+	}, nil
 }
 
-func (m *MockIOInfoClient) GetEgress(ctx context.Context, req *rpc.GetEgressRequest, opts ...psrpc.RequestOption) (*livekit.EgressInfo, error) {
-	return nil, errors.New("not implemented")
-}
+// MockIOInfoClient removed - all methods removed since we no longer use LiveKit RPC
 
-func (m *MockIOInfoClient) ListEgress(ctx context.Context, req *livekit.ListEgressRequest, opts ...psrpc.RequestOption) (*livekit.ListEgressResponse, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (m *MockIOInfoClient) UpdateMetrics(ctx context.Context, req *rpc.UpdateMetricsRequest, opts ...psrpc.RequestOption) (*emptypb.Empty, error) {
-	return &emptypb.Empty{}, nil
-}
-
-// Ingress methods
-func (m *MockIOInfoClient) CreateIngress(ctx context.Context, req *livekit.IngressInfo, opts ...psrpc.RequestOption) (*emptypb.Empty, error) {
-	return &emptypb.Empty{}, nil
-}
-
-func (m *MockIOInfoClient) GetIngressInfo(ctx context.Context, req *rpc.GetIngressInfoRequest, opts ...psrpc.RequestOption) (*rpc.GetIngressInfoResponse, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (m *MockIOInfoClient) UpdateIngressState(ctx context.Context, req *rpc.UpdateIngressStateRequest, opts ...psrpc.RequestOption) (*emptypb.Empty, error) {
-	return &emptypb.Empty{}, nil
-}
-
-// SIP methods
-func (m *MockIOInfoClient) GetSIPTrunkAuthentication(ctx context.Context, req *rpc.GetSIPTrunkAuthenticationRequest, opts ...psrpc.RequestOption) (*rpc.GetSIPTrunkAuthenticationResponse, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (m *MockIOInfoClient) EvaluateSIPDispatchRules(ctx context.Context, req *rpc.EvaluateSIPDispatchRulesRequest, opts ...psrpc.RequestOption) (*rpc.EvaluateSIPDispatchRulesResponse, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (m *MockIOInfoClient) UpdateSIPCallState(ctx context.Context, req *rpc.UpdateSIPCallStateRequest, opts ...psrpc.RequestOption) (*emptypb.Empty, error) {
-	return &emptypb.Empty{}, nil
-}
-
-func (m *MockIOInfoClient) RecordCallContext(ctx context.Context, req *rpc.RecordCallContextRequest, opts ...psrpc.RequestOption) (*emptypb.Empty, error) {
-	return &emptypb.Empty{}, nil
-}
-
-func (m *MockIOInfoClient) Close() {
-	// No-op for testing
-}
-
-// testRoom is a mock Room implementation that skips actual LiveKit connection
-type testRoom struct {
-	room *Room
-}
-
-// newTestRoom creates a Room that skips actual LiveKit connection
-func newTestRoom(log logger.Logger, st *RoomStats) RoomInterface {
-	if st == nil {
-		st = &RoomStats{}
-	}
-	// Create a Room with all the necessary structure but skip connection
-	room := &Room{
-		log:       log,
-		stats:     st,
-		out:       msdk.NewSwitchWriter(RoomSampleRate),
-		subscribe: atomic.Bool{},
-	}
-
-	// Create mixer
-	var err error
-	out := newMediaWriterCount(room.out, &st.OutputFrames, &st.OutputSamples)
-	room.mix, err = mixer.NewMixer(out, rtp.DefFrameDur, &st.Mixer, 1, mixer.DefaultInputBufferFrames)
-	if err != nil {
-		panic(err)
-	}
-
-	roomLog, resolve := log.WithDeferredValues()
-	room.roomLog = roomLog
-
-	// Create a minimal lksdk.Room without connecting
-	room.room = lksdk.NewRoom(nil)
-
-	// Set ready immediately (skip connection)
-	room.ready.Break()
-	resolve.Resolve()
-
-	room.room.OnRoomUpdate(&livekit.Room{ // Set metadata, and specifically Sid
-		Name:            "test-room",
-		Metadata:        "test-metadata",
-		Sid:             "test-room-sid",
-		NumParticipants: 1,
-		NumPublishers:   1,
-	})
-
-	// Set up minimal participant info
-	room.p = ParticipantInfo{
-		ID:       "test-participant-id",
-		RoomName: "test-room",
-		Identity: "test-participant",
-		Name:     "Test Participant",
-	}
-
-	return &testRoom{room: room}
-}
-
-// Connect overrides Room.Connect to skip actual LiveKit connection
-func (r *testRoom) Connect(conf *config.Config, rconf RoomConfig) error {
-	// Update participant info from config
-	partConf := rconf.Participant
-	r.room.p = ParticipantInfo{
-		RoomName: rconf.RoomName,
-		Identity: partConf.Identity,
-		Name:     partConf.Name,
-	}
-	// Skip actual connection - room is already set up
-	return nil
-}
-
-// All other methods delegate to the embedded Room
-func (r *testRoom) Closed() <-chan struct{} {
-	return r.room.Closed()
-}
-
-func (r *testRoom) Subscribed() <-chan struct{} {
-	return r.room.Subscribed()
-}
-
-func (r *testRoom) Room() *lksdk.Room {
-	return r.room.Room()
-}
-
-func (r *testRoom) Subscribe() {
-	r.room.Subscribe()
-}
-
-func (r *testRoom) Output() msdk.Writer[msdk.PCM16Sample] {
-	return r.room.Output()
-}
-
-func (r *testRoom) SwapOutput(out msdk.PCM16Writer) msdk.PCM16Writer {
-	return r.room.SwapOutput(out)
-}
-
-func (r *testRoom) CloseOutput() error {
-	return r.room.CloseOutput()
-}
-
-func (r *testRoom) SetDTMFOutput(w dtmf.Writer) {
-	r.room.SetDTMFOutput(w)
-}
-
-func (r *testRoom) Close() error {
-	return r.room.Close()
-}
-
-func (r *testRoom) CloseWithReason(reason livekit.DisconnectReason) error {
-	return r.room.CloseWithReason(reason)
-}
-
-func (r *testRoom) Participant() ParticipantInfo {
-	return r.room.Participant()
-}
-
-func (r *testRoom) NewParticipantTrack(sampleRate int) (msdk.WriteCloser[msdk.PCM16Sample], error) {
-	// For testing, we need to mock NewParticipantTrack since it requires a real LocalParticipant
-	// which we don't have in our mock lksdk.Room. Return a no-op writer.
-	return &noOpWriter{}, nil
-}
-
-// noOpWriter is a no-op implementation of msdk.WriteCloser for testing
-type noOpWriter struct{}
-
-func (w *noOpWriter) String() string {
-	return "noOpWriter"
-}
-
-func (w *noOpWriter) SampleRate() int {
-	return RoomSampleRate
-}
-
-func (w *noOpWriter) WriteSample(samples msdk.PCM16Sample) error {
-	// No-op for testing
-	return nil
-}
-
-func (w *noOpWriter) Close() error {
-	return nil
-}
-
-func (r *testRoom) SendData(data lksdk.DataPacket, opts ...lksdk.DataPublishOption) error {
-	return r.room.SendData(data, opts...)
-}
-
-func (r *testRoom) NewTrack() *mixer.Input {
-	return r.room.NewTrack()
-}
+// testRoom and newTestRoom removed - Room type no longer exists
+// For B2B bridging, room functionality is not needed
 
 type testSIPClientTransaction struct {
 	responses chan *sip.Response
@@ -443,18 +257,14 @@ func NewTestClientFunc(ua *sipgo.UserAgent, options ...sipgo.ClientOption) (SIPC
 
 // TestClientConfig holds configuration for creating a test Client
 type TestClientConfig struct {
-	Region       string           // Defaults to "test"
 	Config       *config.Config   // Creates minimal config if nil
 	Monitor      *stats.Monitor   // Minimal monitor if nil
 	GetIOClient  GetIOInfoClient  // MockIOInfoClient if nil
 	GetSipClient GetSipClientFunc // NewTestClientFunc if nil
-	GetRoom      GetRoomFunc      // newTestRoom if nil
+	// GetRoom removed - no longer using LiveKit rooms
 }
 
 func NewOutboundTestClient(t testing.TB, cfg TestClientConfig) *Client {
-	if cfg.Region == "" {
-		cfg.Region = "test"
-	}
 	zlogger, err := logger.NewZapLogger(&logger.Config{
 		Level: "debug",
 		JSON:  false, // Use console format, not JSON
@@ -475,9 +285,6 @@ func NewOutboundTestClient(t testing.TB, cfg TestClientConfig) *Client {
 			LocalNet:          localIP.String() + "/24",
 			RTPPort:           rtcconfig.PortRange{Start: 20000, End: 20010},
 			MaxCpuUtilization: 0.99, // Higher threshold for tests to avoid false positives
-			WsUrl:             "ws://localhost:7880",
-			ApiKey:            "test-api-key",
-			ApiSecret:         "test-api-secret-extend-to-32-bytes-minimum",
 		}
 	}
 	if cfg.Monitor == nil {
@@ -504,17 +311,22 @@ func NewOutboundTestClient(t testing.TB, cfg TestClientConfig) *Client {
 		})
 	}
 	if cfg.GetIOClient == nil {
-		cfg.GetIOClient = func(projectID string) rpc.IOInfoClient {
-			return &MockIOInfoClient{}
+		cfg.GetIOClient = func(projectID string) AuthClient {
+			return &MockAuthClient{}
 		}
 	}
 	if cfg.GetSipClient == nil {
 		cfg.GetSipClient = NewTestClientFunc
 	}
-	if cfg.GetRoom == nil {
-		cfg.GetRoom = newTestRoom
-	}
-	client := NewClient(cfg.Region, cfg.Config, zlogger, cfg.Monitor, cfg.GetIOClient, WithGetSipClient(cfg.GetSipClient), WithGetRoomClient(cfg.GetRoom))
+	// GetRoom removed - no longer using LiveKit rooms
+	// Use functional options pattern for client creation
+	client := NewClient(cfg.Config, zlogger, cfg.Monitor, cfg.GetIOClient,
+		WithClientConfig(cfg.Config),
+		WithClientLogger(zlogger),
+		WithClientMonitor(cfg.Monitor),
+		WithClientAuthFunc(cfg.GetIOClient),
+		WithGetSipClient(cfg.GetSipClient),
+	)
 	client.SetHandler(&TestHandler{})
 
 	// Set up service config with minimal values
@@ -538,21 +350,23 @@ func NewOutboundTestClient(t testing.TB, cfg TestClientConfig) *Client {
 	return client
 }
 
-// MinimalCreateSIPParticipantRequest creates a minimal valid request for testing.
-// All required fields are set to test values.
-func MinimalCreateSIPParticipantRequest() *rpc.InternalCreateSIPParticipantRequest {
-	localIP, _ := config.GetLocalIP()
-	return &rpc.InternalCreateSIPParticipantRequest{
-		CallTo:              "+1234567890",
-		Address:             "sip.example.com",
-		Number:              "+0987654321",
-		Hostname:            localIP.String(),
-		RoomName:            "test-room",
-		ParticipantIdentity: "test-participant",
-		ParticipantName:     "Test Participant",
-		SipCallId:           "test-call-id",
-		Transport:           livekit.SIPTransport_SIP_TRANSPORT_UDP,
-		WsUrl:               "ws://localhost:7880",
-		Token:               "test-token",
-	}
+// MinimalCreateSIPParticipantRequest removed - was for LiveKit room integration
+// Use B2B bridging instead
+// This function is kept for backward compatibility but returns nil
+func MinimalCreateSIPParticipantRequest() interface{} {
+	// Return nil since CreateSIPParticipant is no longer available
+	// Original implementation was:
+	// localIP, _ := config.GetLocalIP()
+	// return &rpc.InternalCreateSIPParticipantRequest{
+	// 	CallTo:              "+1234567890",
+	// 	Address:             "sip.example.com",
+	// 	Number:              "+0987654321",
+	// 	Hostname:            localIP.String(),
+	// 	RoomName:            "test-room",
+	// 	ParticipantIdentity: "test-participant",
+	// 	ParticipantName:     "Test Participant",
+	// 	SipCallId:           "test-call-id",
+	// 	Transport:           livekit.SIPTransport_SIP_TRANSPORT_UDP,
+	// }
+	return nil
 }

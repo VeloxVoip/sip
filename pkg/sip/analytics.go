@@ -19,18 +19,18 @@ import (
 	"sync"
 	"time"
 
-	"google.golang.org/protobuf/types/known/emptypb"
-
 	"github.com/livekit/protocol/livekit"
-	"github.com/livekit/protocol/rpc"
 	"github.com/livekit/protocol/utils"
 	"github.com/livekit/protocol/utils/guid"
-	"github.com/livekit/psrpc"
 	"github.com/pkg/errors"
 )
 
+// StateUpdater is a no-op interface for B2B bridging
+// State updates are no longer sent via RPC
 type StateUpdater interface {
-	UpdateSIPCallState(ctx context.Context, req *rpc.UpdateSIPCallStateRequest, opts ...psrpc.RequestOption) (*emptypb.Empty, error)
+	// UpdateSIPCallState is a no-op for B2B bridging
+	// Implementations can log or ignore state updates
+	UpdateSIPCallState(ctx context.Context, callInfo *livekit.SIPCallInfo) error
 }
 
 func NewCallState(cli StateUpdater, initial *livekit.SIPCallInfo) *CallState {
@@ -78,11 +78,8 @@ func (s *CallState) StartTransfer(ctx context.Context, transferTo string) string
 		TransferStatus:        livekit.SIPTransferStatus_STS_TRANSFER_ONGOING,
 	}
 
-	req := &rpc.UpdateSIPCallStateRequest{
-		TransferInfo: ti,
-	}
-
-	s.cli.UpdateSIPCallState(ctx, req)
+	// State updates removed - no longer using RPC
+	// For B2B bridging, transfer state is tracked locally only
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -115,11 +112,8 @@ func (s *CallState) EndTransfer(ctx context.Context, transferID string, inErr er
 		ti.TransferStatusCode = sipStatus
 	}
 
-	req := &rpc.UpdateSIPCallStateRequest{
-		TransferInfo: ti,
-	}
-
-	s.cli.UpdateSIPCallState(ctx, req)
+	// State updates removed - no longer using RPC
+	// For B2B bridging, transfer state is tracked locally only
 
 	return
 }
@@ -129,12 +123,9 @@ func (s *CallState) flush(ctx context.Context) {
 		s.dirty = false
 		return
 	}
-	_, err := s.cli.UpdateSIPCallState(context.WithoutCancel(ctx), &rpc.UpdateSIPCallStateRequest{
-		CallInfo: s.callInfo,
-	})
-	if err == nil {
-		s.dirty = false
-	}
+	// State updates removed - no longer using RPC
+	// For B2B bridging, state updates are not needed
+	s.dirty = false
 }
 
 func (s *CallState) Flush(ctx context.Context) {

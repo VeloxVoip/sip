@@ -28,18 +28,16 @@ import (
 	"github.com/frostbyte73/core"
 	"github.com/hashicorp/golang-lru/v2/expirable"
 	"github.com/icholy/digest"
-	"golang.org/x/exp/maps"
 
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 	msdk "github.com/livekit/media-sdk"
 	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/protocol/logger"
-	"github.com/livekit/protocol/rpc"
 	"github.com/livekit/protocol/utils/traceid"
 
-	"github.com/livekit/sip/pkg/config"
-	"github.com/livekit/sip/pkg/stats"
+	"github.com/veloxvoip/sip/pkg/config"
+	"github.com/veloxvoip/sip/pkg/stats"
 )
 
 const (
@@ -58,21 +56,12 @@ var (
 
 type CallInfo struct {
 	TrunkID string
-	Call    *rpc.SIPCall
+	Call    *SIPCall
 	Pin     string
 	NoPin   bool
 }
 
-type AuthResult int
-
-const (
-	AuthNotFound = AuthResult(iota)
-	AuthDrop
-	AuthPassword
-	AuthAccept
-	AuthQuotaExceeded
-	AuthNoTrunkFound
-)
+// AuthResult and DispatchResult now defined in types_sip.go
 
 type AuthInfo struct {
 	Result       AuthResult
@@ -80,32 +69,23 @@ type AuthInfo struct {
 	TrunkID      string
 	Username     string
 	Password     string
-	ProviderInfo *livekit.ProviderInfo
+	ProviderInfo *ProviderInfo
 }
-
-type DispatchResult int
-
-const (
-	DispatchAccept = DispatchResult(iota)
-	DispatchRequestPin
-	DispatchNoRuleReject // reject the call with an error
-	DispatchNoRuleDrop   // silently drop the call
-)
 
 type CallDispatch struct {
 	Result              DispatchResult
-	Room                RoomConfig
+	RoutingDestination  *RoutingDestination // For B2B SIP bridging (required)
 	ProjectID           string
 	TrunkID             string
 	DispatchRuleID      string
 	Headers             map[string]string
 	HeadersToAttributes map[string]string
-	IncludeHeaders      livekit.SIPHeaderOptions
+	IncludeHeaders      HeaderOptions
 	AttributesToHeaders map[string]string
-	EnabledFeatures     []livekit.SIPFeature
+	EnabledFeatures     []SIPFeature
 	RingingTimeout      time.Duration
 	MaxCallDuration     time.Duration
-	MediaEncryption     livekit.SIPMediaEncryption
+	MediaEncryption     MediaEncryption
 }
 
 type CallIdentifier struct {
@@ -116,9 +96,9 @@ type CallIdentifier struct {
 }
 
 type Handler interface {
-	GetAuthCredentials(ctx context.Context, call *rpc.SIPCall) (AuthInfo, error)
+	GetAuthCredentials(ctx context.Context, call *SIPCall) (AuthInfo, error)
 	DispatchCall(ctx context.Context, info *CallInfo) CallDispatch
-	GetMediaProcessor(features []livekit.SIPFeature) msdk.PCM16Processor
+	GetMediaProcessor(features []SIPFeature) msdk.PCM16Processor
 
 	RegisterTransferSIPParticipantTopic(sipCallId string) error
 	DeregisterTransferSIPParticipantTopic(sipCallId string)
@@ -127,23 +107,20 @@ type Handler interface {
 }
 
 type Server struct {
-	log          logger.Logger
-	mon          *stats.Monitor
-	region       string
-	sipSrv       *sipgo.Server
-	getIOClient  GetIOInfoClient
-	getRoom      GetRoomFunc
-	sipListeners []io.Closer
-	sipUnhandled RequestHandler
+	log           logger.Logger
+	mon           *stats.Monitor
+	sipSrv        *sipgo.Server
+	getAuthClient GetIOInfoClient // Returns AuthClient for authentication and dispatch
+	sipListeners  []io.Closer
+	sipUnhandled  RequestHandler
 
 	imu               sync.Mutex
 	inProgressInvites []*inProgressInvite
 
 	closing     core.Fuse
-	cmu         sync.RWMutex
-	byRemoteTag map[RemoteTag]*inboundCall
-	byLocalTag  map[LocalTag]*inboundCall
-	byCallID    map[string]*inboundCall
+	byRemoteTag sync.Map // map[RemoteTag]*inboundCall - atomic dialog storage
+	byLocalTag  sync.Map // map[LocalTag]*inboundCall - atomic dialog storage
+	byCallID    sync.Map // map[string]*inboundCall - atomic dialog storage
 
 	infos struct {
 		sync.Mutex
@@ -155,6 +132,9 @@ type Server struct {
 	sconf   *ServiceConfig
 
 	res mediaRes
+
+	// Client for making outbound calls (for B2B bridging)
+	client *Client
 }
 
 type inProgressInvite struct {
@@ -164,28 +144,54 @@ type inProgressInvite struct {
 
 type ServerOption func(s *Server)
 
-func WithGetRoomServer(fn GetRoomFunc) ServerOption {
+// WithServerConfig sets the configuration
+func WithServerConfig(conf *config.Config) ServerOption {
 	return func(s *Server) {
-		if fn != nil {
-			s.getRoom = fn
+		if conf != nil {
+			s.conf = conf
 		}
 	}
 }
 
-func NewServer(region string, conf *config.Config, log logger.Logger, mon *stats.Monitor, getIOClient GetIOInfoClient, options ...ServerOption) *Server {
+// WithServerLogger sets a custom logger
+func WithServerLogger(log logger.Logger) ServerOption {
+	return func(s *Server) {
+		if log != nil {
+			s.log = log
+		}
+	}
+}
+
+// WithServerMonitor sets a custom stats monitor
+func WithServerMonitor(mon *stats.Monitor) ServerOption {
+	return func(s *Server) {
+		if mon != nil {
+			s.mon = mon
+		}
+	}
+}
+
+// WithServerAuthFunc sets the auth client factory function
+func WithServerAuthFunc(fn GetIOInfoClient) ServerOption {
+	return func(s *Server) {
+		if fn != nil {
+			s.getAuthClient = fn
+		}
+	}
+}
+
+// WithGetRoomServer removed - no longer needed for B2B bridging
+
+func NewServer(conf *config.Config, log logger.Logger, mon *stats.Monitor, getAuthClient GetIOInfoClient, options ...ServerOption) *Server {
 	if log == nil {
 		log = logger.GetLogger()
 	}
 	s := &Server{
-		log:         log,
-		conf:        conf,
-		region:      region,
-		mon:         mon,
-		getIOClient: getIOClient,
-		getRoom:     DefaultGetRoomFunc,
-		byRemoteTag: make(map[RemoteTag]*inboundCall),
-		byLocalTag:  make(map[LocalTag]*inboundCall),
-		byCallID:    make(map[string]*inboundCall),
+		log:           log,
+		conf:          conf,
+		mon:           mon,
+		getAuthClient: getAuthClient,
+		// sync.Map zero values are ready to use
 	}
 	for _, option := range options {
 		option(s)
@@ -295,24 +301,12 @@ func (s *Server) Start(agent *sipgo.UserAgent, sc *ServiceConfig, tlsConf *tls.C
 		return err
 	}
 
-	s.sipSrv.OnOptions(func(req *sip.Request, tx sip.ServerTransaction) {
-		s.onOptions(req, tx)
-	})
-	s.sipSrv.OnInvite(func(req *sip.Request, tx sip.ServerTransaction) {
-		s.onInvite(req, tx)
-	})
-	s.sipSrv.OnAck(func(req *sip.Request, tx sip.ServerTransaction) {
-		s.onAck(req, tx)
-	})
-	s.sipSrv.OnBye(func(req *sip.Request, tx sip.ServerTransaction) {
-		s.onBye(req, tx)
-	})
-	s.sipSrv.OnNotify(func(req *sip.Request, tx sip.ServerTransaction) {
-		s.onNotify(req, tx)
-	})
-	s.sipSrv.OnNoRoute(func(req *sip.Request, tx sip.ServerTransaction) {
-		s.OnNoRoute(req, tx)
-	})
+	s.sipSrv.OnOptions(s.onOptions)
+	s.sipSrv.OnInvite(s.onInvite)
+	s.sipSrv.OnAck(s.onAck)
+	s.sipSrv.OnBye(s.onBye)
+	s.sipSrv.OnNotify(s.onNotify)
+	s.sipSrv.OnNoRoute(s.OnNoRoute)
 	s.sipUnhandled = unhandled
 
 	listenIP := s.conf.ListenIP
@@ -343,10 +337,15 @@ func (s *Server) Start(agent *sipgo.UserAgent, sc *ServiceConfig, tlsConf *tls.C
 
 func (s *Server) Stop() {
 	s.closing.Break()
-	s.cmu.Lock()
-	calls := maps.Values(s.byRemoteTag)
-	s.byRemoteTag = make(map[RemoteTag]*inboundCall)
-	s.cmu.Unlock()
+	// Collect all calls using Range (atomic operation)
+	var calls []*inboundCall
+	s.byRemoteTag.Range(func(key, value any) bool {
+		if call, ok := value.(*inboundCall); ok {
+			calls = append(calls, call)
+		}
+		return true
+	})
+	// Close all calls
 	for _, c := range calls {
 		_ = c.Close()
 	}

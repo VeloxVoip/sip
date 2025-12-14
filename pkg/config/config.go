@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
-	"os"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -29,10 +28,9 @@ import (
 	"github.com/livekit/protocol/logger/medialogutils"
 	"github.com/livekit/protocol/redis"
 	"github.com/livekit/protocol/utils/guid"
-	"github.com/livekit/psrpc"
 	lksdk "github.com/livekit/server-sdk-go/v2"
 
-	"github.com/livekit/sip/pkg/errors"
+	"github.com/veloxvoip/sip/pkg/errors"
 )
 
 const (
@@ -57,10 +55,7 @@ type TLSConfig struct {
 }
 
 type Config struct {
-	Redis     *redis.RedisConfig `yaml:"redis"`      // required
-	ApiKey    string             `yaml:"api_key"`    // required (env LIVEKIT_API_KEY)
-	ApiSecret string             `yaml:"api_secret"` // required (env LIVEKIT_API_SECRET)
-	WsUrl     string             `yaml:"ws_url"`     // required (env LIVEKIT_WS_URL)
+	Redis *redis.RedisConfig `yaml:"redis"` // required
 
 	HealthPort         int                 `yaml:"health_port"`
 	PrometheusPort     int                 `yaml:"prometheus_port"`
@@ -113,9 +108,6 @@ type Config struct {
 
 func NewConfig(confString string) (*Config, error) {
 	conf := &Config{
-		ApiKey:      os.Getenv("LIVEKIT_API_KEY"),
-		ApiSecret:   os.Getenv("LIVEKIT_API_SECRET"),
-		WsUrl:       os.Getenv("LIVEKIT_WS_URL"),
 		ServiceName: "sip",
 	}
 	if confString != "" {
@@ -125,7 +117,7 @@ func NewConfig(confString string) (*Config, error) {
 	}
 
 	if conf.Redis == nil {
-		return nil, psrpc.NewErrorf(psrpc.InvalidArgument, "redis configuration is required")
+		return nil, fmt.Errorf("redis configuration is required")
 	}
 
 	return conf, nil

@@ -17,7 +17,7 @@ package sip
 import (
 	msdk "github.com/livekit/media-sdk"
 
-	"github.com/livekit/sip/res"
+	"github.com/veloxvoip/sip/res"
 )
 
 type mediaRes struct {

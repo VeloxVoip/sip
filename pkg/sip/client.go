@@ -16,10 +16,7 @@ package sip
 
 import (
 	"context"
-	"net/netip"
-	"strings"
 	"sync"
-	"time"
 
 	"github.com/frostbyte73/core"
 	"golang.org/x/exp/maps"
@@ -28,14 +25,9 @@ import (
 	"github.com/emiago/sipgo/sip"
 	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/protocol/logger"
-	"github.com/livekit/protocol/rpc"
-	"github.com/livekit/protocol/tracer"
-	"github.com/livekit/protocol/utils/traceid"
-	"github.com/livekit/psrpc"
 
-	"github.com/livekit/sip/pkg/config"
-	siperrors "github.com/livekit/sip/pkg/errors"
-	"github.com/livekit/sip/pkg/stats"
+	"github.com/veloxvoip/sip/pkg/config"
+	"github.com/veloxvoip/sip/pkg/stats"
 )
 
 // An interface mirroring sipgo.Client to be able to mock it in tests.
@@ -69,11 +61,12 @@ type Client struct {
 	handler      Handler
 	getIOClient  GetIOInfoClient
 	getSipClient GetSipClientFunc
-	getRoom      GetRoomFunc
+	// getRoom removed - no longer using LiveKit rooms
 }
 
 type ClientOption func(c *Client)
 
+// WithGetSipClient sets a custom SIP client factory function
 func WithGetSipClient(fn GetSipClientFunc) ClientOption {
 	return func(c *Client) {
 		if fn != nil {
@@ -82,26 +75,63 @@ func WithGetSipClient(fn GetSipClientFunc) ClientOption {
 	}
 }
 
-func WithGetRoomClient(fn GetRoomFunc) ClientOption {
+// WithClientRegion sets the region for the client
+func WithClientRegion(region string) ClientOption {
 	return func(c *Client) {
-		if fn != nil {
-			c.getRoom = fn
+		if region != "" {
+			c.region = region
 		}
 	}
 }
 
-func NewClient(region string, conf *config.Config, log logger.Logger, mon *stats.Monitor, getIOClient GetIOInfoClient, options ...ClientOption) *Client {
+// WithClientConfig sets the configuration
+func WithClientConfig(conf *config.Config) ClientOption {
+	return func(c *Client) {
+		if conf != nil {
+			c.conf = conf
+		}
+	}
+}
+
+// WithClientLogger sets a custom logger
+func WithClientLogger(log logger.Logger) ClientOption {
+	return func(c *Client) {
+		if log != nil {
+			c.log = log
+		}
+	}
+}
+
+// WithClientMonitor sets a custom stats monitor
+func WithClientMonitor(mon *stats.Monitor) ClientOption {
+	return func(c *Client) {
+		if mon != nil {
+			c.mon = mon
+		}
+	}
+}
+
+// WithClientAuthFunc sets the auth client factory function
+func WithClientAuthFunc(fn GetIOInfoClient) ClientOption {
+	return func(c *Client) {
+		if fn != nil {
+			c.getIOClient = fn
+		}
+	}
+}
+
+// WithGetRoomClient removed - no longer using LiveKit rooms
+
+func NewClient(conf *config.Config, log logger.Logger, mon *stats.Monitor, getIOClient GetIOInfoClient, options ...ClientOption) *Client {
 	if log == nil {
 		log = logger.GetLogger()
 	}
 	c := &Client{
 		conf:         conf,
 		log:          log,
-		region:       region,
 		mon:          mon,
 		getIOClient:  getIOClient,
 		getSipClient: DefaultGetSipClientFunc,
-		getRoom:      DefaultGetRoomFunc,
 		activeCalls:  make(map[LocalTag]*outboundCall),
 		byRemote:     make(map[RemoteTag]*outboundCall),
 	}
@@ -160,155 +190,11 @@ func (c *Client) ContactURI(tr Transport) URI {
 	return getContactURI(c.conf, c.sconf.SignalingIP, tr)
 }
 
-func (c *Client) CreateSIPParticipant(ctx context.Context, req *rpc.InternalCreateSIPParticipantRequest) (*rpc.InternalCreateSIPParticipantResponse, error) {
-	ctx, span := tracer.Start(ctx, "Client.CreateSIPParticipant")
-	defer span.End()
-	return c.createSIPParticipant(ctx, req)
-}
+// CreateSIPParticipant removed - was for LiveKit room integration
+// Use B2B bridging via CreateOutboundCallForBridge instead
 
-func (c *Client) createSIPParticipant(ctx context.Context, req *rpc.InternalCreateSIPParticipantRequest) (resp *rpc.InternalCreateSIPParticipantResponse, retErr error) {
-	if c.mon.Health() != stats.HealthOK {
-		return nil, siperrors.ErrUnavailable
-	}
-	if req.CallTo == "" {
-		return nil, psrpc.NewErrorf(psrpc.InvalidArgument, "call-to number must be set")
-	} else if req.Address == "" {
-		return nil, psrpc.NewErrorf(psrpc.InvalidArgument, "trunk adresss must be set")
-	} else if req.Number == "" {
-		return nil, psrpc.NewErrorf(psrpc.InvalidArgument, "trunk outbound number must be set")
-	} else if req.RoomName == "" {
-		return nil, psrpc.NewErrorf(psrpc.InvalidArgument, "room name must be set")
-	}
-	if strings.Contains(req.CallTo, "@") {
-		return nil, psrpc.NewErrorf(psrpc.InvalidArgument, "call_to should be a phone number or SIP user, not a full SIP URI")
-	}
-	if strings.HasPrefix(req.Address, "sip:") || strings.HasPrefix(req.Address, "sips:") {
-		return nil, psrpc.NewErrorf(psrpc.InvalidArgument, "address must be a hostname without 'sip:' prefix")
-	}
-	if strings.Contains(req.Address, "transport=") {
-		return nil, psrpc.NewErrorf(psrpc.InvalidArgument, "address must not contain parameters; use transport field")
-	}
-	if strings.ContainsAny(req.Address, ";=") {
-		return nil, psrpc.NewErrorf(psrpc.InvalidArgument, "address must not contain parameters")
-	}
-	log := c.log
-	if req.ProjectId != "" {
-		log = log.WithValues("projectID", req.ProjectId)
-	}
-	if req.SipTrunkId != "" {
-		log = log.WithValues("sipTrunk", req.SipTrunkId)
-	}
-	enc, err := sdpEncryption(req.MediaEncryption)
-	if err != nil {
-		return nil, err
-	}
-	tid := traceid.FromGUID(req.SipCallId)
-	log = log.WithValues(
-		"callID", req.SipCallId,
-		"traceID", tid.String(),
-		"room", req.RoomName,
-		"participant", req.ParticipantIdentity,
-		"participantName", req.ParticipantName,
-		"fromHost", req.Hostname,
-		"fromUser", req.Number,
-		"toHost", req.Address,
-		"toUser", req.CallTo,
-	)
-
-	state := NewCallState(c.getIOClient(req.ProjectId), c.createSIPCallInfo(req))
-
-	defer func() {
-		state.Update(ctx, func(info *livekit.SIPCallInfo) {
-
-			switch retErr {
-			case nil:
-				info.CallStatus = livekit.SIPCallStatus_SCS_PARTICIPANT_JOINED
-			default:
-				info.CallStatus = livekit.SIPCallStatus_SCS_ERROR
-				info.DisconnectReason = livekit.DisconnectReason_UNKNOWN_REASON
-				info.Error = retErr.Error()
-			}
-		})
-	}()
-
-	roomConf := RoomConfig{
-		WsUrl:    req.WsUrl,
-		Token:    req.Token,
-		RoomName: req.RoomName,
-		Participant: ParticipantConfig{
-			Identity:   req.ParticipantIdentity,
-			Name:       req.ParticipantName,
-			Metadata:   req.ParticipantMetadata,
-			Attributes: req.ParticipantAttributes,
-		},
-	}
-	sipConf := sipOutboundConfig{
-		address:         req.Address,
-		transport:       req.Transport,
-		host:            req.Hostname,
-		from:            req.Number,
-		to:              req.CallTo,
-		user:            req.Username,
-		pass:            req.Password,
-		dtmf:            req.Dtmf,
-		dialtone:        req.PlayDialtone,
-		headers:         req.Headers,
-		includeHeaders:  req.IncludeHeaders,
-		headersToAttrs:  req.HeadersToAttributes,
-		attrsToHeaders:  req.AttributesToHeaders,
-		ringingTimeout:  req.RingingTimeout.AsDuration(),
-		maxCallDuration: req.MaxCallDuration.AsDuration(),
-		enabledFeatures: req.EnabledFeatures,
-		mediaEncryption: enc,
-		displayName:     req.DisplayName,
-	}
-	log.Infow("Creating SIP participant")
-	call, err := c.newCall(ctx, tid, c.conf, log, LocalTag(req.SipCallId), roomConf, sipConf, state, req.ProjectId)
-	if err != nil {
-		return nil, err
-	}
-	p := call.Participant()
-	// Start actual SIP call async.
-
-	info := &rpc.InternalCreateSIPParticipantResponse{
-		ParticipantId:       p.ID,
-		ParticipantIdentity: p.Identity,
-		SipCallId:           req.SipCallId,
-	}
-	if !req.WaitUntilAnswered {
-		call.DialAsync(ctx)
-		return info, nil
-	}
-	if err := call.Dial(ctx); err != nil {
-		return nil, err
-	}
-	go call.WaitClose(context.WithoutCancel(ctx))
-	return info, nil
-}
-
-func (c *Client) createSIPCallInfo(req *rpc.InternalCreateSIPParticipantRequest) *livekit.SIPCallInfo {
-	toUri := CreateURIFromUserAndAddress(req.CallTo, req.Address, TransportFrom(req.Transport))
-	fromiUri := URI{
-		User: req.Number,
-		Host: req.Hostname,
-		Addr: netip.AddrPortFrom(c.sconf.SignalingIP, uint16(c.conf.SIPPort)),
-	}
-
-	callInfo := &livekit.SIPCallInfo{
-		CallId:                req.SipCallId,
-		Region:                c.region,
-		TrunkId:               req.SipTrunkId,
-		RoomName:              req.RoomName,
-		ParticipantIdentity:   req.ParticipantIdentity,
-		ParticipantAttributes: req.ParticipantAttributes,
-		CallDirection:         livekit.SIPCallDirection_SCD_OUTBOUND,
-		ToUri:                 toUri.ToSIPUri(),
-		FromUri:               fromiUri.ToSIPUri(),
-		CreatedAtNs:           time.Now().UnixNano(),
-	}
-
-	return callInfo
-}
+// createSIPParticipant and createSIPCallInfo removed - were for LiveKit room integration
+// Use B2B bridging instead
 
 func (c *Client) OnRequest(req *sip.Request, tx sip.ServerTransaction) bool {
 	switch req.Method {

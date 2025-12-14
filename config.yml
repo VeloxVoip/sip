@@ -1,0 +1,11 @@
+redis:
+  address: 'localhost:6379'
+transports:
+  - type: "udp"
+    bind: 0.0.0.0
+    port: 5060
+  - type: "tcp"
+    bind: 0.0.0.0
+    port: 5060
+rtp_port: 10000-20000
+use_external_ip: true

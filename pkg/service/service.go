@@ -30,31 +30,27 @@ import (
 
 	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/protocol/logger"
-	"github.com/livekit/protocol/rpc"
-	"github.com/livekit/psrpc"
 
-	"github.com/livekit/sip/pkg/stats"
+	"github.com/veloxvoip/sip/pkg/stats"
+	"github.com/veloxvoip/sip/pkg/tracer"
 
-	"github.com/livekit/sip/pkg/config"
-	"github.com/livekit/sip/pkg/sip"
-	"github.com/livekit/sip/version"
+	"github.com/veloxvoip/sip/pkg/config"
+	sipkg "github.com/veloxvoip/sip/pkg/sip"
+	"github.com/veloxvoip/sip/version"
 )
 
 type sipServiceStopFunc func()
-type sipServiceActiveCallsFunc func() sip.ActiveCalls
+type sipServiceActiveCallsFunc func() sipkg.ActiveCalls
 
 type Service struct {
 	conf *config.Config
 	log  logger.Logger
 
-	psrpcServer rpc.SIPInternalServerImpl
-	psrpcClient rpc.IOInfoClient
-	bus         psrpc.MessageBus
+	authClient sipkg.AuthClient // For authentication and dispatch (replaces rpc.IOInfoClient)
 
 	promServer   *http.Server
 	pprofServer  *http.Server
 	healthServer *http.Server
-	rpcSIPServer rpc.SIPInternalServer
 
 	sipServiceStop        sipServiceStopFunc
 	sipServiceActiveCalls sipServiceActiveCallsFunc
@@ -65,16 +61,14 @@ type Service struct {
 }
 
 func NewService(
-	conf *config.Config, log logger.Logger, srv rpc.SIPInternalServerImpl, sipServiceStop sipServiceStopFunc,
-	sipServiceActiveCalls sipServiceActiveCallsFunc, cli rpc.IOInfoClient, bus psrpc.MessageBus, mon *stats.Monitor,
+	conf *config.Config, log logger.Logger, sipServiceStop sipServiceStopFunc,
+	sipServiceActiveCalls sipServiceActiveCallsFunc, authClient sipkg.AuthClient, mon *stats.Monitor,
 ) *Service {
 	s := &Service{
 		conf: conf,
 		log:  log,
 
-		psrpcServer: srv,
-		psrpcClient: cli,
-		bus:         bus,
+		authClient: authClient,
 
 		sipServiceStop:        sipServiceStop,
 		sipServiceActiveCalls: sipServiceActiveCalls,
@@ -167,15 +161,7 @@ func (s *Service) Run() error {
 		}()
 	}
 
-	var err error
-	if s.rpcSIPServer, err = rpc.NewSIPInternalServer(s.psrpcServer, s.bus); err != nil {
-		return err
-	}
-	defer s.rpcSIPServer.Shutdown()
-
-	if err := s.RegisterCreateSIPParticipantTopic(); err != nil {
-		return err
-	}
+	// RPC server removed - no longer using LiveKit RPC
 
 	s.log.Debugw("service ready")
 
@@ -183,7 +169,7 @@ func (s *Service) Run() error {
 		select {
 		case <-s.shutdown.Watch():
 			s.log.Infow("shutting down")
-			s.DeregisterCreateSIPParticipantTopic()
+			// RPC server shutdown removed
 
 			if !s.killed.Load() {
 				shutdownTicker := time.NewTicker(5 * time.Second)
@@ -210,15 +196,142 @@ func (s *Service) Run() error {
 	}
 }
 
-func (s *Service) GetAuthCredentials(ctx context.Context, call *rpc.SIPCall) (sip.AuthInfo, error) {
-	return GetAuthCredentials(ctx, s.psrpcClient, call)
+func (s *Service) GetAuthCredentials(ctx context.Context, call *sipkg.SIPCall) (sipkg.AuthInfo, error) {
+	ctx, span := tracer.Start(ctx, "service.GetAuthCredentials")
+	defer span.End()
+
+	if s.authClient == nil {
+		return sipkg.AuthInfo{}, fmt.Errorf("auth client not configured")
+	}
+
+	resp, err := s.authClient.GetAuthCredentials(ctx, call)
+	if err != nil {
+		return sipkg.AuthInfo{}, err
+	}
+
+	// Convert AuthResponse to AuthInfo
+	authInfo := sipkg.AuthInfo{
+		ProjectID:    resp.ProjectID,
+		TrunkID:      resp.SipTrunkId,
+		Result:       resp.Result,
+		Username:     resp.Username,
+		Password:     resp.Password,
+		ProviderInfo: resp.ProviderInfo,
+	}
+
+	// Map error codes
+	switch resp.ErrorCode {
+	case sipkg.AuthErrorQuotaExceeded:
+		authInfo.Result = sipkg.AuthQuotaExceeded
+	case sipkg.AuthErrorNoTrunkFound:
+		authInfo.Result = sipkg.AuthNoTrunkFound
+	}
+
+	return authInfo, nil
 }
 
-func (s *Service) DispatchCall(ctx context.Context, info *sip.CallInfo) sip.CallDispatch {
-	return DispatchCall(ctx, s.psrpcClient, s.log, info)
+func (s *Service) DispatchCall(ctx context.Context, info *sipkg.CallInfo) sipkg.CallDispatch {
+	ctx, span := tracer.Start(ctx, "service.DispatchCall")
+	defer span.End()
+
+	if s.authClient == nil {
+		s.log.Warnw("Auth client not configured - rejecting call", nil)
+		return sipkg.CallDispatch{Result: sipkg.DispatchNoRuleReject}
+	}
+
+	req := &sipkg.DispatchRequest{
+		SipTrunkId:    info.TrunkID,
+		Call:          info.Call,
+		Pin:           info.Pin,
+		NoPin:         info.NoPin,
+		SipCallId:     info.Call.LkCallId,
+		CallingNumber: info.Call.From.User,
+		CallingHost:   info.Call.From.Host,
+		CalledNumber:  info.Call.To.User,
+		CalledHost:    info.Call.To.Host,
+		SrcAddress:    info.Call.SourceIp,
+	}
+
+	resp, err := s.authClient.EvaluateDispatchRules(ctx, req)
+	if err != nil {
+		s.log.Warnw("SIP handle dispatch rule error", err)
+		return sipkg.CallDispatch{Result: sipkg.DispatchNoRuleReject}
+	}
+
+	return s.buildB2BDispatch(resp)
 }
 
-func (s *Service) GetMediaProcessor(_ []livekit.SIPFeature) msdk.PCM16Processor {
+// buildB2BDispatch creates a CallDispatch with RoutingDestination for B2B bridging
+func (s *Service) buildB2BDispatch(resp *sipkg.DispatchResponse) sipkg.CallDispatch {
+	// Map DispatchResult
+	var result sipkg.DispatchResult
+	switch resp.Result {
+	case sipkg.DispatchAccept:
+		result = sipkg.DispatchAccept
+	case sipkg.DispatchRequestPin:
+		result = sipkg.DispatchRequestPin
+	case sipkg.DispatchNoRuleReject:
+		result = sipkg.DispatchNoRuleReject
+	case sipkg.DispatchNoRuleDrop:
+		result = sipkg.DispatchNoRuleDrop
+	default:
+		result = sipkg.DispatchNoRuleReject
+	}
+
+	// Build routing destination if ToUri is provided
+	var routingDest *sipkg.RoutingDestination
+	if resp.ToUri != nil {
+		// Convert our SIPURI to sip.Uri using existing conversion
+		// First create a URI struct, then convert to sip.Uri
+		uri := sipkg.URI{
+			User: resp.ToUri.User,
+			Host: resp.ToUri.Host,
+		}
+		// Determine transport from our SIPTransport type
+		transport := sipkg.TransportUDP
+		switch resp.ToUri.Transport {
+		case sipkg.SIPTransportTCP:
+			transport = sipkg.TransportTCP
+		case sipkg.SIPTransportTLS:
+			transport = sipkg.TransportTLS
+		}
+		uri.Transport = transport
+
+		// Convert to sip.Uri using GetURI method
+		sipURI := uri.GetURI()
+
+		routingDest = &sipkg.RoutingDestination{
+			Type:     sipkg.RoutingTypeSIP,
+			SIPURI:   sipURI,
+			Headers:  resp.Headers,
+			Username: resp.Username,
+			Password: resp.Password,
+		}
+	}
+
+	if result == sipkg.DispatchAccept && routingDest == nil {
+		s.log.Warnw("Accept result but no routing destination - rejecting call", nil)
+		result = sipkg.DispatchNoRuleReject
+	}
+
+	return sipkg.CallDispatch{
+		ProjectID:           resp.ProjectID,
+		Result:              result,
+		RoutingDestination:  routingDest,
+		TrunkID:             resp.SipTrunkId,
+		DispatchRuleID:      resp.SipDispatchRuleId,
+		Headers:             resp.Headers,
+		IncludeHeaders:      resp.IncludeHeaders,
+		HeadersToAttributes: resp.HeadersToAttributes,
+		AttributesToHeaders: resp.AttributesToHeaders,
+		EnabledFeatures:     resp.EnabledFeatures,
+		RingingTimeout:      time.Duration(resp.RingingTimeout),
+		MaxCallDuration:     time.Duration(resp.MaxCallDuration),
+		MediaEncryption:     resp.MediaEncryption,
+	}
+}
+
+func (s *Service) GetMediaProcessor(_ []sipkg.SIPFeature) msdk.PCM16Processor {
 	return nil
 }
 
@@ -226,34 +339,19 @@ func (s *Service) Health() stats.HealthStatus {
 	return s.mon.Health()
 }
 
-func (s *Service) RegisterCreateSIPParticipantTopic() error {
-	if s.rpcSIPServer != nil {
-		return s.rpcSIPServer.RegisterCreateSIPParticipantTopic(s.conf.ClusterID)
-	}
+// RegisterCreateSIPParticipantTopic removed - no longer using RPC
 
+// DeregisterCreateSIPParticipantTopic removed - no longer using RPC
+
+func (s *Service) RegisterTransferSIPParticipantTopic(sipCallId string) error {
+	// No-op - no longer using RPC topics
 	return nil
 }
 
-func (s *Service) DeregisterCreateSIPParticipantTopic() {
-	if s.rpcSIPServer != nil {
-		s.rpcSIPServer.DeregisterCreateSIPParticipantTopic(s.conf.ClusterID)
-	}
-}
-
-func (s *Service) RegisterTransferSIPParticipantTopic(sipCallId string) error {
-	if s.rpcSIPServer != nil {
-		return s.rpcSIPServer.RegisterTransferSIPParticipantTopic(sipCallId)
-	}
-
-	return psrpc.NewErrorf(psrpc.Internal, "RPC server not started")
-}
-
 func (s *Service) DeregisterTransferSIPParticipantTopic(sipCallId string) {
-	if s.rpcSIPServer != nil {
-		s.rpcSIPServer.DeregisterTransferSIPParticipantTopic(sipCallId)
-	}
+	// No-op - no longer using RPC topics
 }
 
-func (s *Service) OnSessionEnd(ctx context.Context, callIdentifier *sip.CallIdentifier, callInfo *livekit.SIPCallInfo, reason string) {
+func (s *Service) OnSessionEnd(ctx context.Context, callIdentifier *sipkg.CallIdentifier, callInfo *livekit.SIPCallInfo, reason string) {
 	s.log.Infow("SIP call ended", "callID", callInfo.CallId, "reason", reason)
 }

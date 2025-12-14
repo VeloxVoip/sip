@@ -25,22 +25,17 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
-	"google.golang.org/protobuf/types/known/emptypb"
-
 	"github.com/emiago/sipgo"
+	"github.com/emiago/sipgo/sip"
 	msdk "github.com/livekit/media-sdk"
 	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/protocol/logger"
-	"github.com/livekit/protocol/rpc"
-	"github.com/livekit/psrpc"
 
-	"github.com/livekit/sip/pkg/config"
-	siperrors "github.com/livekit/sip/pkg/errors"
-	"github.com/livekit/sip/pkg/stats"
-	"github.com/livekit/sip/version"
+	"github.com/veloxvoip/sip/pkg/config"
+	"github.com/veloxvoip/sip/pkg/stats"
+	"github.com/veloxvoip/sip/version"
 )
 
 type ServiceConfig struct {
@@ -67,9 +62,57 @@ type transferKey struct {
 	TransferTo string
 }
 
-type GetIOInfoClient func(projectID string) rpc.IOInfoClient
+// GetIOInfoClient is defined in auth_client.go
 
-func NewService(region string, conf *config.Config, mon *stats.Monitor, log logger.Logger, getIOClient GetIOInfoClient) (*Service, error) {
+// ServiceOption is a functional option for configuring a Service
+type ServiceOption func(*Service)
+
+// WithServiceConfig sets the configuration
+func WithServiceConfig(conf *config.Config) ServiceOption {
+	return func(s *Service) {
+		if conf != nil {
+			s.conf = conf
+			if s.cli != nil {
+				s.cli.conf = conf
+			}
+			if s.srv != nil {
+				s.srv.conf = conf
+			}
+		}
+	}
+}
+
+// WithServiceLogger sets a custom logger
+func WithServiceLogger(log logger.Logger) ServiceOption {
+	return func(s *Service) {
+		if log != nil {
+			s.log = log
+			if s.cli != nil {
+				s.cli.log = log
+			}
+			if s.srv != nil {
+				s.srv.log = log
+			}
+		}
+	}
+}
+
+// WithServiceMonitor sets a custom stats monitor
+func WithServiceMonitor(mon *stats.Monitor) ServiceOption {
+	return func(s *Service) {
+		if mon != nil {
+			s.mon = mon
+			if s.cli != nil {
+				s.cli.mon = mon
+			}
+			if s.srv != nil {
+				s.srv.mon = mon
+			}
+		}
+	}
+}
+
+func NewService(conf *config.Config, mon *stats.Monitor, log logger.Logger, getIOClient GetIOInfoClient, options ...ServiceOption) (*Service, error) {
 	if log == nil {
 		log = logger.GetLogger()
 	}
@@ -79,14 +122,25 @@ func NewService(region string, conf *config.Config, mon *stats.Monitor, log logg
 	if conf.MediaTimeoutInitial <= 0 {
 		conf.MediaTimeoutInitial = defaultMediaTimeoutInitial
 	}
+	cli := NewClient(conf, log, mon, getIOClient)
+	srv := NewServer(conf, log, mon, getIOClient)
+	// Connect server to client for B2B bridging
+	srv.client = cli
+
 	s := &Service{
 		conf:             conf,
 		log:              log,
 		mon:              mon,
-		cli:              NewClient(region, conf, log, mon, getIOClient),
-		srv:              NewServer(region, conf, log, mon, getIOClient),
+		cli:              cli,
+		srv:              srv,
 		pendingTransfers: make(map[transferKey]chan struct{}),
 	}
+
+	// Apply options
+	for _, opt := range options {
+		opt(s)
+	}
+
 	var err error
 	s.sconf, err = GetServiceConfig(s.conf)
 	if err != nil {
@@ -162,16 +216,22 @@ func (s *Service) ActiveCalls() ActiveCalls {
 	st.SampleIDs = append(st.SampleIDs, samples...)
 	s.cli.cmu.Unlock()
 
-	s.srv.cmu.Lock()
-	samples, total = sampleMap(5, s.srv.byRemoteTag, func(v *inboundCall) string {
-		if v == nil || v.cc == nil {
-			return "<nil>"
+	// Use Range to iterate over sync.Map atomically
+	var inboundSamples []string
+	var inboundTotal int
+	s.srv.byRemoteTag.Range(func(key, value any) bool {
+		inboundTotal++
+		if inboundTotal <= 5 {
+			if call, ok := value.(*inboundCall); ok && call != nil && call.cc != nil {
+				inboundSamples = append(inboundSamples, string(call.cc.id))
+			} else {
+				inboundSamples = append(inboundSamples, "<nil>")
+			}
 		}
-		return string(v.cc.id)
+		return true
 	})
-	st.Inbound = total
-	st.SampleIDs = append(st.SampleIDs, samples...)
-	s.srv.cmu.Unlock()
+	st.Inbound = inboundTotal
+	st.SampleIDs = append(st.SampleIDs, inboundSamples...)
 
 	return st
 }
@@ -265,75 +325,11 @@ func (s *Service) Start() error {
 	return nil
 }
 
-func (s *Service) CreateSIPParticipant(ctx context.Context, req *rpc.InternalCreateSIPParticipantRequest) (*rpc.InternalCreateSIPParticipantResponse, error) {
-	resp, err := s.cli.CreateSIPParticipant(ctx, req)
-	return resp, siperrors.ApplySIPStatus(err)
-}
+// CreateSIPParticipant removed - was for LiveKit room integration
+// Use B2B bridging instead
 
-func (s *Service) CreateSIPParticipantAffinity(ctx context.Context, req *rpc.InternalCreateSIPParticipantRequest) float32 {
-	// TODO: scale affinity based on a number or active calls?
-	return 0.5
-}
-
-func (s *Service) TransferSIPParticipant(ctx context.Context, req *rpc.InternalTransferSIPParticipantRequest) (*emptypb.Empty, error) {
-	resp, err := s.transferSIPParticipant(ctx, req)
-	return resp, siperrors.ApplySIPStatus(err)
-}
-
-func (s *Service) transferSIPParticipant(ctx context.Context, req *rpc.InternalTransferSIPParticipantRequest) (*emptypb.Empty, error) {
-	s.log.Infow("transferring SIP call", "callID", req.SipCallId, "transferTo", req.TransferTo)
-
-	// Check if provider is internal and config is set before allowing transfer
-	if err := s.checkInternalProviderRequest(ctx, req.SipCallId); err != nil {
-		return &emptypb.Empty{}, err
-	}
-
-	var transferResult atomic.Pointer[error]
-
-	s.mu.Lock()
-	k := transferKey{
-		SipCallId:  req.SipCallId,
-		TransferTo: req.TransferTo,
-	}
-	done, ok := s.pendingTransfers[k]
-	if !ok {
-		done = make(chan struct{})
-		s.pendingTransfers[k] = done
-
-		timeout := req.RingingTimeout.AsDuration()
-		if timeout <= 0 {
-			timeout = 80 * time.Second
-		}
-
-		go func() {
-			ctx, cdone := context.WithTimeout(context.WithoutCancel(ctx), timeout)
-			defer cdone()
-
-			err := s.processParticipantTransfer(ctx, req.SipCallId, req.TransferTo, req.Headers, req.PlayDialtone)
-			transferResult.Store(&err)
-			close(done)
-
-			s.mu.Lock()
-			delete(s.pendingTransfers, k)
-			s.mu.Unlock()
-		}()
-	} else {
-		s.log.Debugw("repeated request for call transfer", "callID", req.SipCallId, "transferTo", req.TransferTo)
-	}
-	s.mu.Unlock()
-
-	select {
-	case <-done:
-		var err error
-		errPtr := transferResult.Load()
-		if errPtr != nil {
-			err = *errPtr
-		}
-		return &emptypb.Empty{}, err
-	case <-ctx.Done():
-		return &emptypb.Empty{}, psrpc.NewError(psrpc.Canceled, ctx.Err())
-	}
-}
+// TransferSIPParticipant removed - was RPC-based
+// Transfer functionality is available via direct method calls
 
 func (s *Service) processParticipantTransfer(ctx context.Context, callID string, transferTo string, headers map[string]string, dialtone bool) error {
 	// Look for call both in client (outbound) and server (inbound)
@@ -352,9 +348,8 @@ func (s *Service) processParticipantTransfer(ctx context.Context, callID string,
 		return nil
 	}
 
-	s.srv.cmu.Lock()
-	in := s.srv.byLocalTag[LocalTag(callID)]
-	s.srv.cmu.Unlock()
+	inVal, _ := s.srv.byLocalTag.Load(LocalTag(callID))
+	in, _ := inVal.(*inboundCall)
 
 	if in != nil {
 		s.mon.TransferStarted(stats.Inbound)
@@ -367,7 +362,7 @@ func (s *Service) processParticipantTransfer(ctx context.Context, callID string,
 		return nil
 	}
 
-	err := psrpc.NewErrorf(psrpc.NotFound, "unknown call")
+	err := ErrNotFound("unknown call")
 	s.mon.TransferFailed(stats.Inbound, "unknown_call", false)
 	return err
 }
@@ -382,15 +377,14 @@ func (s *Service) checkInternalProviderRequest(ctx context.Context, callID strin
 		return s.validateCallProvider(out.state)
 	}
 
-	s.srv.cmu.Lock()
-	in := s.srv.byLocalTag[LocalTag(callID)]
-	s.srv.cmu.Unlock()
+	inVal, _ := s.srv.byLocalTag.Load(LocalTag(callID))
+	in, _ := inVal.(*inboundCall)
 
 	if in != nil {
 		return s.validateCallProvider(in.state)
 	}
 
-	return psrpc.NewErrorf(psrpc.NotFound, "unknown call")
+	return ErrNotFound("unknown call")
 }
 
 func (s *Service) validateCallProvider(state *CallState) error {
@@ -420,22 +414,20 @@ func extractTransferErrorReason(err error) string {
 		return strings.ToLower(sipStatus.Code.ShortName())
 	}
 
-	// Check for psrpc errors
-	var psrpcErr psrpc.Error
-	if errors.As(err, &psrpcErr) {
-		switch psrpcErr.Code() {
-		case psrpc.NotFound:
+	// Check for SIP errors
+	var sipErr *SIPError
+	if errors.As(err, &sipErr) {
+		switch sipErr.Code {
+		case sip.StatusNotFound:
 			return "not_found"
-		case psrpc.Canceled:
-			return "canceled"
-		case psrpc.DeadlineExceeded:
+		case sip.StatusRequestTimeout:
 			return "timeout"
-		case psrpc.InvalidArgument:
+		case sip.StatusBadRequest:
 			return "invalid_argument"
-		case psrpc.Internal:
+		case sip.StatusInternalServerError:
 			return "internal_error"
 		default:
-			return "psrpc_error"
+			return "sip_error"
 		}
 	}
 

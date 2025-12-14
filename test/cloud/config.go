@@ -1,9 +1,7 @@
 package cloud
 
 import (
-	"os"
-
-	"github.com/livekit/sip/pkg/config"
+	"github.com/veloxvoip/sip/pkg/config"
 )
 
 const (
@@ -21,9 +19,6 @@ type IntegrationConfig struct {
 func NewIntegrationConfig() (*IntegrationConfig, error) {
 	c := &IntegrationConfig{
 		Config: &config.Config{
-			ApiKey:             os.Getenv("LIVEKIT_API_KEY"),
-			ApiSecret:          os.Getenv("LIVEKIT_API_SECRET"),
-			WsUrl:              os.Getenv("LIVEKIT_WS_URL"),
 			ServiceName:        "sip",
 			EnableJitterBuffer: true,
 		},

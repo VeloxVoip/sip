@@ -24,17 +24,14 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/livekit/protocol/logger"
-	"github.com/livekit/protocol/redis"
-	"github.com/livekit/protocol/rpc"
-	"github.com/livekit/psrpc"
 
-	"github.com/livekit/sip/pkg/stats"
+	"github.com/veloxvoip/sip/pkg/stats"
 
-	"github.com/livekit/sip/pkg/config"
-	"github.com/livekit/sip/pkg/errors"
-	"github.com/livekit/sip/pkg/service"
-	"github.com/livekit/sip/pkg/sip"
-	"github.com/livekit/sip/version"
+	"github.com/veloxvoip/sip/pkg/config"
+	"github.com/veloxvoip/sip/pkg/errors"
+	"github.com/veloxvoip/sip/pkg/service"
+	sipkg "github.com/veloxvoip/sip/pkg/sip"
+	"github.com/veloxvoip/sip/version"
 )
 
 func main() {
@@ -70,17 +67,6 @@ func runService(_ context.Context, c *cli.Command) error {
 	}
 	log := logger.GetLogger()
 
-	rc, err := redis.GetRedisClient(conf.Redis)
-	if err != nil {
-		return err
-	}
-
-	bus := psrpc.NewRedisMessageBus(rc)
-	psrpcClient, err := rpc.NewIOInfoClient(bus)
-	if err != nil {
-		return err
-	}
-
 	stopChan := make(chan os.Signal, 1)
 	signal.Notify(stopChan, syscall.SIGTERM, syscall.SIGQUIT)
 
@@ -92,11 +78,30 @@ func runService(_ context.Context, c *cli.Command) error {
 		return err
 	}
 
-	sipsrv, err := sip.NewService("", conf, mon, log, func(projectID string) rpc.IOInfoClient { return psrpcClient })
+	// Create a simple auth client
+	// TODO: Load trunk configurations from config file or database
+	authClient := sipkg.NewSimpleAuthClient()
+
+	// Example: Add a trunk configuration
+	// This would normally be loaded from your config file
+	authClient.AddTrunk(&sipkg.TrunkConfig{
+		ID:          "default-trunk",
+		Name:        "Default Trunk",
+		AllowedFrom: []string{"*"}, // Allow all sources for testing
+		Routes: []sipkg.RouteConfig{
+			{
+				Name:    "default-route",
+				Pattern: "*",                       // Match all numbers
+				ToURI:   "sip:gateway.example.com", // Replace with your gateway
+			},
+		},
+	})
+
+	sipsrv, err := sipkg.NewService(conf, mon, log, func(projectID string) sipkg.AuthClient { return authClient })
 	if err != nil {
 		return err
 	}
-	svc := service.NewService(conf, log, sipsrv, sipsrv.Stop, sipsrv.ActiveCalls, psrpcClient, bus, mon)
+	svc := service.NewService(conf, log, sipsrv.Stop, sipsrv.ActiveCalls, authClient, mon)
 	sipsrv.SetHandler(svc)
 
 	if err = sipsrv.Start(); err != nil {

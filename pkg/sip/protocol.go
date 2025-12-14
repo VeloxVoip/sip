@@ -27,9 +27,8 @@ import (
 
 	"github.com/emiago/sipgo/sip"
 	"github.com/livekit/protocol/livekit"
-	"github.com/livekit/psrpc"
 
-	"github.com/livekit/sip/pkg/config"
+	"github.com/veloxvoip/sip/pkg/config"
 )
 
 const (
@@ -348,16 +347,16 @@ func parseNotifyBody(body string) (int, string, error) {
 	v := strings.SplitN(body, " ", 3)
 
 	if len(v) < 2 {
-		return 0, "", psrpc.NewErrorf(psrpc.InvalidArgument, "invalid notify body: not enough tokens")
+		return 0, "", ErrInvalidArgument(fmt.Errorf("invalid notify body: not enough tokens"))
 	}
 
 	if strings.ToUpper(v[0]) != "SIP/2.0" {
-		return 0, "", psrpc.NewErrorf(psrpc.InvalidArgument, "invalid notify body: wrong prefix or SIP version")
+		return 0, "", ErrInvalidArgument(fmt.Errorf("invalid notify body: wrong prefix or SIP version"))
 	}
 
 	c, err := strconv.Atoi(v[1])
 	if err != nil {
-		return 0, "", psrpc.NewError(psrpc.InvalidArgument, err)
+		return 0, "", ErrInvalidArgument(err)
 	}
 	if len(v) < 3 {
 		return c, "", nil
@@ -375,7 +374,7 @@ func handleNotify(req *sip.Request) (method sip.RequestMethod, cseq uint32, stat
 		event = req.GetHeader("o")
 	}
 	if event == nil {
-		return "", 0, 0, "", psrpc.NewErrorf(psrpc.MalformedRequest, "no event in NOTIFY request")
+		return "", 0, 0, "", ErrMalformedRequest(fmt.Errorf("no event in NOTIFY request"))
 	}
 
 	var cseq64 uint64
@@ -395,7 +394,7 @@ func handleNotify(req *sip.Request) (method sip.RequestMethod, cseq uint32, stat
 
 		return method, uint32(cseq64), status, reason, nil
 	}
-	return "", 0, 0, reason, psrpc.NewErrorf(psrpc.Unimplemented, "unknown event")
+	return "", 0, 0, reason, ErrUnimplemented(fmt.Errorf("unknown event"))
 }
 
 func handleReferNotify(cseq uint32, status int, reason string, referCseq uint32, referDone chan<- error) {
@@ -417,16 +416,8 @@ func handleReferNotify(cseq uint32, status int, reason string, referCseq uint32,
 			Code:   livekit.SIPStatusCode(status),
 			Status: reason,
 		}
-		// Converts SIP status to GRPC via SIPStatus.GRPCStatus(), then converts to psrpc via ErrorCodeFromGRPC()
-		errorCode, _ := psrpc.GetErrorCode(st)
-		if errorCode == psrpc.Internal || errorCode == psrpc.Unavailable {
-			// Temporarily overwrite the code until we support a direct SIPStatus -> psrpc.ErrorCode conversion
-			errorCode = psrpc.UpstreamServerError
-			if status < 500 || status >= 600 { // Common 6xx codes: 603 Declined, 608 Rejected
-				errorCode = psrpc.UpstreamClientError
-			}
-		}
-		result = psrpc.NewErrorf(errorCode, "call transfer failed: %w", st)
+		// For B2B bridging, use SIP status directly
+		result = fmt.Errorf("call transfer failed: %w", st)
 	}
 	select {
 	case referDone <- result:
@@ -434,56 +425,28 @@ func handleReferNotify(cseq uint32, status int, reason string, referCseq uint32,
 	}
 }
 
-func sipStatusForErrorCode(code psrpc.ErrorCode) sip.StatusCode {
-	switch code {
-	case psrpc.OK:
-		return sip.StatusOK
-	case psrpc.Canceled, psrpc.DeadlineExceeded:
-		return sip.StatusRequestTimeout
-	case psrpc.Unknown, psrpc.MalformedResponse, psrpc.Internal, psrpc.DataLoss:
-		return sip.StatusInternalServerError
-	case psrpc.InvalidArgument, psrpc.MalformedRequest:
-		return sip.StatusBadRequest
-	case psrpc.NotFound:
-		return sip.StatusNotFound
-	case psrpc.NotAcceptable:
-		return sip.StatusNotAcceptable
-	case psrpc.AlreadyExists, psrpc.Aborted:
-		return sip.StatusConflict
-	case psrpc.PermissionDenied:
-		return sip.StatusForbidden
-	case psrpc.ResourceExhausted:
-		return sip.StatusTemporarilyUnavailable
-	case psrpc.FailedPrecondition:
-		return sip.StatusCallTransactionDoesNotExists
-	case psrpc.OutOfRange:
-		return sip.StatusRequestedRangeNotSatisfiable
-	case psrpc.Unimplemented:
-		return sip.StatusNotImplemented
-	case psrpc.Unavailable:
-		return sip.StatusServiceUnavailable
-	case psrpc.Unauthenticated:
-		return sip.StatusUnauthorized
-	case psrpc.UpstreamServerError:
-		return sip.StatusBadGateway
-	case psrpc.UpstreamClientError:
-		return sip.StatusTemporarilyUnavailable
-	default:
-		return sip.StatusInternalServerError
-	}
-}
+// sipStatusForErrorCode removed - no longer needed without psrpc
+// Use SIPError.Code directly if needed
 
 func sipCodeAndMessageFromError(err error) (code sip.StatusCode, msg string) {
 	code = 200
-	var psrpcErr psrpc.Error
-	if errors.As(err, &psrpcErr) {
-		code = sipStatusForErrorCode(psrpcErr.Code())
-	} else if err != nil {
-		code = 500
+	msg = "success"
+
+	if err == nil {
+		return code, msg
 	}
 
-	msg = "success"
-	if err != nil {
+	// Check for SIPError
+	var sipErr *SIPError
+	if errors.As(err, &sipErr) {
+		code = sipErr.Code
+		msg = sipErr.Reason
+		if sipErr.Err != nil {
+			msg = sipErr.Err.Error()
+		}
+	} else {
+		// Default to 500 for unknown errors
+		code = 500
 		msg = err.Error()
 	}
 
@@ -500,14 +463,34 @@ func setCSeq(req *sip.Request, cseq uint32) {
 	req.AppendHeader(h)
 }
 
-func ToSIPUri(ip string, u sip.Uri) *livekit.SIPUri {
-	tr, _ := u.UriParams.Get("transport")
-	url := &livekit.SIPUri{
+func ToSIPUri(ip string, u sip.Uri) *SIPURI {
+	transport := SIPTransportUDP
+	if u.UriParams != nil {
+		if tr, ok := u.UriParams.Get("transport"); ok {
+			switch tr {
+			case "tcp":
+				transport = SIPTransportTCP
+			case "tls":
+				transport = SIPTransportTLS
+			}
+		}
+	}
+
+	port := uint32(u.Port)
+	if port == 0 {
+		if transport == SIPTransportTLS {
+			port = 5061
+		} else {
+			port = 5060
+		}
+	}
+
+	url := &SIPURI{
 		User:      u.User,
 		Host:      u.Host,
-		Ip:        ip,
-		Port:      uint32(u.Port),
-		Transport: SIPTransportFrom(Transport(tr)),
+		IP:        ip,
+		Port:      port,
+		Transport: transport,
 	}
 	return url
 }

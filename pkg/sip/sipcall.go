@@ -1,4 +1,4 @@
-// Copyright 2023 LiveKit, Inc.
+// Copyright 2025 VeloxVoIP
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,24 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package errors
+package sip
 
-import (
-	"fmt"
-)
-
-var (
-	ErrNoConfig    = fmt.Errorf("missing config")
-	ErrUnavailable = fmt.Errorf("cpu exhausted")
-)
-
-func ErrCouldNotParseConfig(err error) error {
-	return fmt.Errorf("could not parse config: %w", err)
-}
-
-// ApplySIPStatus is a no-op for B2B bridging
-// SIP status errors are handled directly without RPC conversion
-func ApplySIPStatus(err error) error {
-	// Just return the error as-is
-	return err
+// SIPCall represents a SIP call for authentication and dispatch
+// Pure B2B SIP implementation with no LiveKit dependencies
+type SIPCall struct {
+	LkCallId  string
+	SipCallId string
+	From      *SIPURI
+	To        *SIPURI
+	SourceIp  string
 }

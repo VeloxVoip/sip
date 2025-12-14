@@ -17,14 +17,13 @@ import (
 	"github.com/livekit/mediatransportutil/pkg/rtcconfig"
 	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/protocol/logger"
-	"github.com/livekit/protocol/rpc"
 
 	"github.com/livekit/media-sdk/sdp"
 
 	"sync"
 
-	"github.com/livekit/sip/pkg/config"
-	"github.com/livekit/sip/pkg/stats"
+	"github.com/veloxvoip/sip/pkg/config"
+	"github.com/veloxvoip/sip/pkg/stats"
 )
 
 const (
@@ -58,12 +57,12 @@ func expectNoResponse(t *testing.T, tx sip.ClientTransaction) {
 }
 
 type TestHandler struct {
-	GetAuthCredentialsFunc func(ctx context.Context, call *rpc.SIPCall) (AuthInfo, error)
+	GetAuthCredentialsFunc func(ctx context.Context, call *SIPCall) (AuthInfo, error)
 	DispatchCallFunc       func(ctx context.Context, info *CallInfo) CallDispatch
 	OnSessionEndFunc       func(ctx context.Context, callIdentifier *CallIdentifier, callInfo *livekit.SIPCallInfo, reason string)
 }
 
-func (h TestHandler) GetAuthCredentials(ctx context.Context, call *rpc.SIPCall) (AuthInfo, error) {
+func (h TestHandler) GetAuthCredentials(ctx context.Context, call *SIPCall) (AuthInfo, error) {
 	return h.GetAuthCredentialsFunc(ctx, call)
 }
 
@@ -71,7 +70,7 @@ func (h TestHandler) DispatchCall(ctx context.Context, info *CallInfo) CallDispa
 	return h.DispatchCallFunc(ctx, info)
 }
 
-func (h TestHandler) GetMediaProcessor(_ []livekit.SIPFeature) msdk.PCM16Processor {
+func (h TestHandler) GetMediaProcessor(_ []SIPFeature) msdk.PCM16Processor {
 	return nil
 }
 
@@ -102,12 +101,12 @@ func testInvite(t *testing.T, h Handler, hidden bool, from, to string, test func
 
 	// Use a no-op logger to avoid panics from async logging after test completion
 	log := logger.LogRLogger(logr.Discard())
-	s, err := NewService("", &config.Config{
+	s, err := NewService(&config.Config{
 		HideInboundPort: hidden,
 		SIPPort:         sipPort,
 		SIPPortListen:   sipPort,
 		RTPPort:         rtcconfig.PortRange{Start: testPortRTPMin, End: testPortRTPMax},
-	}, mon, log, func(projectID string) rpc.IOInfoClient { return nil })
+	}, mon, log, func(projectID string) AuthClient { return nil })
 	require.NoError(t, err)
 	require.NotNil(t, s)
 	t.Cleanup(s.Stop)
@@ -148,7 +147,7 @@ func TestService_AuthFailure(t *testing.T) {
 		expectedToUser   = "bar"
 	)
 	h := &TestHandler{
-		GetAuthCredentialsFunc: func(ctx context.Context, call *rpc.SIPCall) (AuthInfo, error) {
+		GetAuthCredentialsFunc: func(ctx context.Context, call *SIPCall) (AuthInfo, error) {
 			require.Equal(t, expectedFromUser, call.From.User)
 			require.Equal(t, expectedToUser, call.To.User)
 			return AuthInfo{}, fmt.Errorf("Auth Failure")
@@ -169,7 +168,7 @@ func TestService_AuthDrop(t *testing.T) {
 		expectedToUser   = "bar"
 	)
 	h := &TestHandler{
-		GetAuthCredentialsFunc: func(ctx context.Context, call *rpc.SIPCall) (AuthInfo, error) {
+		GetAuthCredentialsFunc: func(ctx context.Context, call *SIPCall) (AuthInfo, error) {
 			require.Equal(t, expectedFromUser, call.From.User)
 			require.Equal(t, expectedToUser, call.To.User)
 			return AuthInfo{Result: AuthDrop}, nil
@@ -194,16 +193,17 @@ func TestService_OnSessionEnd(t *testing.T) {
 	var receivedReason string
 
 	h := &TestHandler{
-		GetAuthCredentialsFunc: func(ctx context.Context, call *rpc.SIPCall) (AuthInfo, error) {
+		GetAuthCredentialsFunc: func(ctx context.Context, call *SIPCall) (AuthInfo, error) {
 			return AuthInfo{Result: AuthAccept}, nil
 		},
 		DispatchCallFunc: func(ctx context.Context, info *CallInfo) CallDispatch {
 			return CallDispatch{
 				Result: DispatchAccept,
-				Room: RoomConfig{
-					RoomName: "test-room",
-					Participant: ParticipantConfig{
-						Identity: "test-participant",
+				RoutingDestination: &RoutingDestination{
+					Type: RoutingTypeSIP,
+					SIPURI: &sip.Uri{
+						User: "test",
+						Host: "example.com",
 					},
 				},
 			}
@@ -224,11 +224,11 @@ func TestService_OnSessionEnd(t *testing.T) {
 
 	// Use a no-op logger to avoid panics from async logging after test completion
 	log := logger.LogRLogger(logr.Discard())
-	s, err := NewService("", &config.Config{
+	s, err := NewService(&config.Config{
 		SIPPort:       sipPort,
 		SIPPortListen: sipPort,
 		RTPPort:       rtcconfig.PortRange{Start: testPortRTPMin, End: testPortRTPMax},
-	}, mon, log, func(projectID string) rpc.IOInfoClient { return nil })
+	}, mon, log, func(projectID string) AuthClient { return nil })
 	require.NoError(t, err)
 	require.NotNil(t, s)
 	t.Cleanup(s.Stop)
@@ -287,7 +287,7 @@ func TestDigestAuthSimultaneousCalls(t *testing.T) {
 	var authMutex sync.Mutex
 
 	h := &TestHandler{
-		GetAuthCredentialsFunc: func(ctx context.Context, call *rpc.SIPCall) (AuthInfo, error) {
+		GetAuthCredentialsFunc: func(ctx context.Context, call *SIPCall) (AuthInfo, error) {
 			authMutex.Lock()
 			defer authMutex.Unlock()
 
@@ -325,12 +325,12 @@ func TestDigestAuthSimultaneousCalls(t *testing.T) {
 
 	// Use a no-op logger to avoid panics from async logging after test completion
 	log := logger.LogRLogger(logr.Discard())
-	s, err := NewService("", &config.Config{
+	s, err := NewService(&config.Config{
 		HideInboundPort: false, // Enable authentication
 		SIPPort:         sipPort,
 		SIPPortListen:   sipPort,
 		RTPPort:         rtcconfig.PortRange{Start: testPortRTPMin, End: testPortRTPMax},
-	}, mon, log, func(projectID string) rpc.IOInfoClient { return nil })
+	}, mon, log, func(projectID string) AuthClient { return nil })
 	require.NoError(t, err)
 	require.NotNil(t, s)
 	t.Cleanup(s.Stop)
@@ -498,7 +498,7 @@ func TestDigestAuthStandardFlow(t *testing.T) {
 	)
 
 	h := &TestHandler{
-		GetAuthCredentialsFunc: func(ctx context.Context, call *rpc.SIPCall) (AuthInfo, error) {
+		GetAuthCredentialsFunc: func(ctx context.Context, call *SIPCall) (AuthInfo, error) {
 			return AuthInfo{
 				Result:   AuthPassword,
 				Username: username,
@@ -528,12 +528,12 @@ func TestDigestAuthStandardFlow(t *testing.T) {
 
 	// Use a no-op logger to avoid panics from async logging after test completion
 	log := logger.LogRLogger(logr.Discard())
-	s, err := NewService("", &config.Config{
+	s, err := NewService(&config.Config{
 		HideInboundPort: false, // Enable authentication
 		SIPPort:         sipPort,
 		SIPPortListen:   sipPort,
 		RTPPort:         rtcconfig.PortRange{Start: testPortRTPMin, End: testPortRTPMax},
-	}, mon, log, func(projectID string) rpc.IOInfoClient { return nil })
+	}, mon, log, func(projectID string) AuthClient { return nil })
 	require.NoError(t, err)
 	require.NotNil(t, s)
 	t.Cleanup(s.Stop)
@@ -629,7 +629,7 @@ func TestCANCELSendsBothResponses(t *testing.T) {
 
 	// Handler that accepts calls and makes them ring (so we can cancel during ringing)
 	h := &TestHandler{
-		GetAuthCredentialsFunc: func(ctx context.Context, call *rpc.SIPCall) (AuthInfo, error) {
+		GetAuthCredentialsFunc: func(ctx context.Context, call *SIPCall) (AuthInfo, error) {
 			return AuthInfo{Result: AuthAccept}, nil
 		},
 		DispatchCallFunc: func(ctx context.Context, info *CallInfo) CallDispatch {
@@ -637,10 +637,11 @@ func TestCANCELSendsBothResponses(t *testing.T) {
 			// This simulates a call that's ringing when CANCEL is received
 			return CallDispatch{
 				Result: DispatchAccept,
-				Room: RoomConfig{
-					RoomName: "test-room",
-					Participant: ParticipantConfig{
-						Identity: "test-participant",
+				RoutingDestination: &RoutingDestination{
+					Type: RoutingTypeSIP,
+					SIPURI: &sip.Uri{
+						User: "test",
+						Host: "example.com",
 					},
 				},
 				RingingTimeout: 30 * time.Second, // Long timeout so call stays ringing
@@ -662,13 +663,13 @@ func TestCANCELSendsBothResponses(t *testing.T) {
 	require.NoError(t, err)
 
 	log := logger.LogRLogger(logr.Discard())
-	s, err := NewService("", &config.Config{
+	s, err := NewService(&config.Config{
 		HideInboundPort:    false,
 		SIPPort:            sipPort,
 		SIPPortListen:      sipPort,
 		RTPPort:            rtcconfig.PortRange{Start: testPortRTPMin, End: testPortRTPMax},
 		SIPRingingInterval: 1 * time.Second,
-	}, mon, log, func(projectID string) rpc.IOInfoClient { return nil })
+	}, mon, log, func(projectID string) AuthClient { return nil })
 	require.NoError(t, err)
 	require.NotNil(t, s)
 	t.Cleanup(s.Stop)

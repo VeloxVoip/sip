@@ -25,7 +25,7 @@ import (
 
 	"github.com/livekit/protocol/utils/hwstats"
 
-	"github.com/livekit/sip/pkg/config"
+	"github.com/veloxvoip/sip/pkg/config"
 )
 
 // Durations are in seconds

@@ -29,22 +29,24 @@ import (
 	"github.com/livekit/media-sdk/rtp"
 
 	"github.com/livekit/protocol/logger"
-	"github.com/livekit/sip/pkg/stats"
+	"github.com/veloxvoip/sip/pkg/stats"
 )
 
 var _ json.Marshaler = (*Stats)(nil)
 
+// Stats tracks statistics for both sides of a B2B SIP call
 type Stats struct {
 	Port   PortStats
-	Room   RoomStats
+	Dialog DialogStats
 	Closed atomic.Bool
 }
 
+// StatsSnapshot represents a snapshot of call statistics
 type StatsSnapshot struct {
-	Port   PortStatsSnapshot  `json:"port"`
-	Room   RoomStatsSnapshot  `json:"room"`
-	Mixer  MixerStatsSnapshot `json:"mixer"`
-	Closed bool               `json:"closed"`
+	Port   PortStatsSnapshot   `json:"port"`
+	Dialog DialogStatsSnapshot `json:"dialog"`
+	Mixer  MixerStatsSnapshot  `json:"mixer"`
+	Closed bool                `json:"closed"`
 }
 
 type MixerStatsSnapshot struct {
@@ -72,16 +74,16 @@ func (s *Stats) Update() {
 		return
 	}
 	s.Port.Update()
-	s.Room.Update()
+	s.Dialog.Update()
 }
 
 func (s *Stats) Load() StatsSnapshot {
 	p := &s.Port
-	r := &s.Room
-	m := &r.Mixer
+	d := &s.Dialog
+	m := &d.Mixer
 	return StatsSnapshot{
-		Port: p.Load(),
-		Room: r.Load(),
+		Port:   p.Load(),
+		Dialog: d.Load(),
 		Mixer: MixerStatsSnapshot{
 			Tracks:        m.Tracks.Load(),
 			TracksTotal:   m.TracksTotal.Load(),
@@ -102,14 +104,14 @@ func (s *Stats) Load() StatsSnapshot {
 }
 
 func (s *Stats) Log(log logger.Logger, callStart time.Time) {
-	const expectedSampleRate = RoomSampleRate
+	const expectedSampleRate = DialogSampleRate
 	st := s.Load()
 	log.Infow("call statistics",
 		"stats", st,
 		"durMin", int(time.Since(callStart).Minutes()),
 		"sip_rx_ppm", ratePPM(st.Port.AudioRX, expectedSampleRate),
 		"sip_tx_ppm", ratePPM(st.Port.AudioTX, expectedSampleRate),
-		"lk_publish_ppm", ratePPM(st.Room.PublishTX, expectedSampleRate),
+		"dialog_publish_ppm", ratePPM(st.Dialog.PublishTX, expectedSampleRate),
 		"expected_pcm_hz", expectedSampleRate,
 	)
 }
@@ -126,9 +128,13 @@ func ratePPM(rate float64, expected int) float64 {
 }
 
 const (
-	channels       = 1
-	RoomSampleRate = 48000
-	RoomResample   = false
+	channels         = 1
+	DialogSampleRate = 48000
+	DialogResample   = false
+
+	// Backward compatibility aliases
+	RoomSampleRate = DialogSampleRate
+	RoomResample   = DialogResample
 )
 
 func newRTPStatsHandler(mon *stats.CallMonitor, typ string, r rtp.Handler) rtp.Handler {

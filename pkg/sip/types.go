@@ -1,4 +1,4 @@
-// Copyright 2024 LiveKit, Inc.
+// Copyright 2025 VeloxVoIP
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -26,6 +26,14 @@ import (
 	"github.com/livekit/media-sdk/sdp"
 	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/protocol/logger"
+)
+
+// Attribute name constants for SIP metadata
+const (
+	AttrSIPHeaderPrefix  = "sip.header."
+	// AttrSIPCallTag and AttrSIPCallIDFull defined in participant.go
+	AttrSIPTrunkID       = "sip.trunkID"
+	AttrSIPDispatchRuleID = "sip.dispatchRuleID"
 )
 
 type Headers []sip.Header
@@ -261,7 +269,7 @@ func LoggerWithHeaders(log logger.Logger, c Signaling) logger.Logger {
 	return log
 }
 
-func HeadersToAttrs(attrs, hdrToAttr map[string]string, opts livekit.SIPHeaderOptions, c Signaling, headers Headers) map[string]string {
+func HeadersToAttrs(attrs, hdrToAttr map[string]string, opts HeaderOptions, c Signaling, headers Headers) map[string]string {
 	if attrs == nil {
 		attrs = make(map[string]string)
 	}
@@ -269,7 +277,7 @@ func HeadersToAttrs(attrs, hdrToAttr map[string]string, opts livekit.SIPHeaderOp
 		headers = c.RemoteHeaders()
 	}
 	// Map all headers, if requested
-	if opts != livekit.SIPHeaderOptions_SIP_NO_HEADERS {
+	if opts != HeaderOptionsNone {
 		for _, h := range headers {
 			if h == nil {
 				continue
@@ -279,12 +287,12 @@ func HeadersToAttrs(attrs, hdrToAttr map[string]string, opts livekit.SIPHeaderOp
 				continue
 			}
 			switch opts {
-			case livekit.SIPHeaderOptions_SIP_X_HEADERS:
+			case HeaderOptionsXHeaders:
 				if !strings.HasPrefix(name, "x-") {
 					continue
 				}
 			}
-			attrs[livekit.AttrSIPHeaderPrefix+name] = h.Value()
+			attrs[AttrSIPHeaderPrefix+name] = h.Value()
 		}
 	}
 	// Global header mapping

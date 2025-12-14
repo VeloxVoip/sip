@@ -93,32 +93,29 @@ redis:
 # Transports for SIP (supports multiple simultaneous transports)
 transports:
   # UDP transport (standard SIP)
-  udp:
-    transport: "udp"
+  - type: "udp"
     bind: 0.0.0.0
     port: 5060
 
   # TCP transport
-  tcp:
-    transport: "tcp"
+  - type: "tcp"
     bind: 0.0.0.0
     port: 5060
 
   # TLS transport (SIPS)
-  tls:
-    transport: "tls"
+  - type: "tls"
     bind: 0.0.0.0
     port: 5061
-    cert_file: "/fullchain.pem"
-    key_file: "/privkey.pem"
 
   # Secure WebSocket for WebRTC users
-  wss:
-    transport: "wss"
+  - type: "wss"
     bind: 0.0.0.0
     port: 5443
-    cert_file: "/fullchain.pem"
-    key_file: "/privkey.pem"
+
+  # WebSocket for WebRTC users
+  - type: "ws"
+    bind: 0.0.0.0
+    port: 8080
 
 # RTP media settings
 rtp_port: RTP media port range (default: 10000-20000)
@@ -183,8 +180,7 @@ log_level: debug
 redis:
   address: localhost:6379
 transports:
-  udp:
-    transport: "udp"
+  - type: "udp"
     bind: 0.0.0.0
     port: 5060
 ```
@@ -206,8 +202,7 @@ log_level: debug
 redis:
   address: host.docker.internal:6379  # or 172.17.0.1:6379 on linux
 transports:
-  udp:
-    transport: "udp"
+  - type: "udp"
     bind: 0.0.0.0
     port: 5060
 ```
@@ -259,6 +254,6 @@ The server provides clean APIs for:
 
 ## Acknowledgments
 
-This project is based on [LiveKit's SIP](https://github.com/livekit/sip) project. Special thanks to [LiveKit](https://github.com/livekit) and all the contributors for their excellent work on the original SIP to WebRTC bridge implementation.
+This project is based on [LiveKit's SIP](https://github.com/veloxvoip/sip) project. Special thanks to [LiveKit](https://github.com/livekit) and all the contributors for their excellent work on the original SIP to WebRTC bridge implementation.
 
 This project uses [emiago/sipgo](https://github.com/emiago/sipgo), an amazing SIP library for writing fast SIP services in Go, created by [emiago](https://github.com/emiago).

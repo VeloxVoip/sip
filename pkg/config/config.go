@@ -33,6 +33,7 @@ import (
 	lksdk "github.com/livekit/server-sdk-go/v2"
 
 	"github.com/veloxvoip/sip/pkg/errors"
+	"github.com/veloxvoip/sip/pkg/ipvalidator"
 )
 
 const (
@@ -54,6 +55,22 @@ type TLSConfig struct {
 	ListenPort int       `yaml:"port_listen"` // SIP signaling port to listen on
 	Certs      []TLSCert `yaml:"certs"`
 	KeyLog     string    `yaml:"key_log"`
+}
+
+type SIPTrunk struct {
+	ID         string   `yaml:"id"`
+	Username   string   `yaml:"username"`
+	Password   string   `yaml:"password"`
+	Domain     string   `yaml:"domain"`
+	AllowedIPs []string `yaml:"allowed_ips"`
+}
+
+// isIPAllowed checks if the source IP is allowed for the SIP trunk
+func (t *SIPTrunk) IsIPAllowed(sourceIP string) bool {
+	if validator, err := ipvalidator.NewIPValidator(t.AllowedIPs); err == nil {
+		return validator.IsAllowed(sourceIP)
+	}
+	return false
 }
 
 type Config struct {
@@ -109,6 +126,8 @@ type Config struct {
 		// InboundWaitACK forces SIP to wait for an ACK to 200 OK before proceeding with the call.
 		InboundWaitACK bool `yaml:"inbound_wait_ack"`
 	} `yaml:"experimental"`
+
+	SIPTrunks []SIPTrunk `yaml:"sip_trunks"`
 }
 
 func NewConfig(confString string) (*Config, error) {
@@ -244,7 +263,29 @@ func GetLocalIP() (netip.Addr, error) {
 		}
 	}
 	if len(candidates) == 0 {
-		return netip.Addr{}, fmt.Errorf("No local IP found")
+		return netip.Addr{}, fmt.Errorf("no local IP found")
 	}
 	return candidates[0].Addr, nil
+}
+
+// GetSIPTrunkBySourceIP gets the SIP trunk for the source IP
+func (c *Config) GetSIPTrunkBySourceIP(sourceIP string) *SIPTrunk {
+	for _, trunk := range c.SIPTrunks {
+		if validator, err := ipvalidator.NewIPValidator(trunk.AllowedIPs); err == nil {
+			if validator.IsAllowed(sourceIP) {
+				return &trunk
+			}
+		}
+	}
+	return nil
+}
+
+// GetSIPTrunkByName gets the SIP trunk by name
+func (c *Config) GetSIPTrunkByHost(domain string) *SIPTrunk {
+	for _, trunk := range c.SIPTrunks {
+		if trunk.Domain == domain {
+			return &trunk
+		}
+	}
+	return nil
 }

@@ -27,17 +27,15 @@ import (
 	"github.com/frostbyte73/core"
 	msdk "github.com/livekit/media-sdk"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/veloxvoip/sip/pkg/config"
+	"github.com/veloxvoip/sip/pkg/sip"
+	"github.com/veloxvoip/sip/pkg/stats"
+	"github.com/veloxvoip/sip/version"
 
 	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/protocol/logger"
 	"github.com/livekit/protocol/rpc"
 	"github.com/livekit/psrpc"
-
-	"github.com/veloxvoip/sip/pkg/stats"
-
-	"github.com/veloxvoip/sip/pkg/config"
-	"github.com/veloxvoip/sip/pkg/sip"
-	"github.com/veloxvoip/sip/version"
 )
 
 type sipServiceStopFunc func()

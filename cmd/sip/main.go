@@ -76,7 +76,7 @@ func runService(_ context.Context, c *cli.Command) error {
 	}
 
 	bus := psrpc.NewRedisMessageBus(rc)
-	psrpcClient, err := rpc.NewIOInfoClient(bus)
+	psrpcClient, err := sip.NewFakeIOInfoClient()
 	if err != nil {
 		return err
 	}

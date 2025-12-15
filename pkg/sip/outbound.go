@@ -38,9 +38,9 @@ import (
 	"github.com/livekit/protocol/utils/guid"
 	"github.com/livekit/protocol/utils/traceid"
 	"github.com/livekit/psrpc"
-	lksdk "github.com/livekit/server-sdk-go/v2"
 
 	"github.com/veloxvoip/sip/pkg/config"
+	"github.com/veloxvoip/sip/pkg/models"
 	"github.com/veloxvoip/sip/pkg/stats"
 )
 
@@ -80,11 +80,10 @@ type outboundCall struct {
 	jitterBuf bool
 	projectID string
 
-	mu       sync.RWMutex
-	mon      *stats.CallMonitor
-	lkRoom   RoomInterface
-	lkRoomIn msdk.PCM16Writer // output to room; OPUS at 48k
-	sipConf  sipOutboundConfig
+	mu           sync.RWMutex
+	mon          *stats.CallMonitor
+	modelSession *ModelSession // Model session; directly connects model to SIP media
+	sipConf      sipOutboundConfig
 }
 
 func (c *Client) newCall(ctx context.Context, tid traceid.ID, conf *config.Config, log logger.Logger, id LocalTag, room RoomConfig, sipConf sipOutboundConfig, state *CallState, projectID string) (*outboundCall, error) {
@@ -95,7 +94,7 @@ func (c *Client) newCall(ctx context.Context, tid traceid.ID, conf *config.Confi
 		sipConf.ringingTimeout = defaultRingingTimeout
 	}
 	jitterBuf := SelectValueBool(conf.EnableJitterBuffer, conf.EnableJitterBufferProb)
-	room.JitterBuf = jitterBuf
+	// RoomConfig is kept for backward compatibility but JitterBuf is now handled directly
 
 	tr := TransportFrom(sipConf.transport)
 	contact := c.ContactURI(tr)
@@ -124,11 +123,8 @@ func (c *Client) newCall(ctx context.Context, tid traceid.ID, conf *config.Confi
 		if len(c.sipConf.attrsToHeaders) == 0 {
 			return headers
 		}
-		r := c.lkRoom.Room()
-		if r == nil {
-			return headers
-		}
-		return AttrsToHeaders(r.LocalParticipant.Attributes(), c.sipConf.attrsToHeaders, headers)
+		// No room attributes to convert - models don't have room participants
+		return headers
 	})
 
 	call.mon = c.mon.NewCall(stats.Outbound, sipConf.host, sipConf.address)
@@ -150,9 +146,23 @@ func (c *Client) newCall(ctx context.Context, tid traceid.ID, conf *config.Confi
 	call.media.SetDTMFAudio(conf.AudioDTMF)
 	call.media.EnableTimeout(false)
 	call.media.DisableOut() // disabled until we get 200
-	if err := call.connectToRoom(ctx, room, c.getRoom); err != nil {
-		call.close(errors.Wrap(err, "room join failed"), callDropped, "join-failed", livekit.DisconnectReason_UNKNOWN_REASON)
-		return nil, fmt.Errorf("update room failed: %w", err)
+	// Create model session using GetModel method
+	// This will use Ultravox by default if no custom model factory is configured
+	callInfo := AgentCallInfo{
+		SipCallID: call.cc.SIPCallID(),
+	}
+	model, err := c.GetModel(ctx, callInfo)
+	if err != nil {
+		call.log.Errorw("failed to get model", err)
+		// Continue without model - will fail later if needed
+	} else if model != nil {
+		call.modelSession, err = NewModelSession(call.log, &call.stats.ModelSession, func(log logger.Logger) (models.Model, error) {
+			return model, nil
+		})
+		if err != nil {
+			call.log.Errorw("failed to create model session", err)
+			// Continue without model - will fail later if needed
+		}
 	}
 
 	c.cmu.Lock()
@@ -168,12 +178,7 @@ func (c *outboundCall) ensureClosed(ctx context.Context) {
 		} else {
 			info.CallStatus = livekit.SIPCallStatus_SCS_DISCONNECTED
 		}
-		if r := c.lkRoom.Room(); r != nil {
-			if p := r.LocalParticipant; p != nil {
-				info.ParticipantIdentity = p.Identity()
-				info.ParticipantAttributes = p.Attributes()
-			}
-		}
+		// No room participant info - models don't have room participants
 		info.EndedAtNs = time.Now().UnixNano()
 	})
 }
@@ -205,14 +210,9 @@ func (c *outboundCall) Dial(ctx context.Context) error {
 	}
 
 	c.state.Update(ctx, func(info *livekit.SIPCallInfo) {
-		lkroom := c.lkRoom.Room()
-		if lkroom == nil {
-			c.log.Errorw("failed to update SIP info", fmt.Errorf("unexpected state: lkroom is not set"))
-			return
-		}
-		info.RoomId = lkroom.SID()
 		info.StartedAtNs = time.Now().UnixNano()
 		info.CallStatus = livekit.SIPCallStatus_SCS_ACTIVE
+		// No room ID - models don't use rooms
 	})
 	return nil
 }
@@ -266,7 +266,13 @@ func (c *outboundCall) Closed() <-chan struct{} {
 }
 
 func (c *outboundCall) Disconnected() <-chan struct{} {
-	return c.lkRoom.Closed()
+	if c.modelSession != nil {
+		return c.modelSession.Closed()
+	}
+	// Return a closed channel if no agent session
+	closed := make(chan struct{})
+	close(closed)
+	return closed
 }
 
 func (c *outboundCall) Close() error {
@@ -315,18 +321,13 @@ func (c *outboundCall) close(err error, status CallStatus, description string, r
 			info.DisconnectReason = reason
 		})
 
-		// Send BYE _before_ closing media/room connection.
-		// This ensures participant attributes are still available for
-		// attributes_to_headers mapping in the setHeaders callback.
-		// See: https://github.com/veloxvoip/sip/issues/404
+		// Send BYE _before_ closing media/agent connection.
 		c.stopSIP(description)
 		c.media.Close()
 
-		if r := c.lkRoom; r != nil {
-			_ = r.CloseOutput()
-			_ = r.CloseWithReason(status.DisconnectReason())
+		if c.modelSession != nil {
+			c.modelSession.Close()
 		}
-		c.lkRoomIn = nil
 
 		c.c.cmu.Lock()
 		delete(c.c.activeCalls, c.cc.ID())
@@ -352,9 +353,8 @@ func (c *outboundCall) close(err error, status CallStatus, description string, r
 }
 
 func (c *outboundCall) Participant() ParticipantInfo {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.lkRoom.Participant()
+	// Agents don't have room participants - return empty info
+	return ParticipantInfo{}
 }
 
 func (c *outboundCall) connectSIP(ctx context.Context, tid traceid.ID) error {
@@ -383,40 +383,16 @@ func (c *outboundCall) connectSIP(ctx context.Context, tid traceid.ID) error {
 	}
 	c.connectMedia()
 	c.started.Break()
-	c.lkRoom.Subscribe()
+	// No need to subscribe - agents connect directly to SIP media
 	c.log.Infow("Outbound SIP call established")
 	return nil
 }
 
-func (c *outboundCall) connectToRoom(ctx context.Context, lkNew RoomConfig, getRoom GetRoomFunc) error {
-	ctx, span := tracer.Start(ctx, "outboundCall.connectToRoom")
-	defer span.End()
-	attrs := lkNew.Participant.Attributes
-	if attrs == nil {
-		attrs = make(map[string]string)
-	}
-
-	sipCallID := attrs[livekit.AttrSIPCallID]
-	if sipCallID != "" {
-		c.c.RegisterTransferSIPParticipant(sipCallID, c)
-	}
-
-	attrs[livekit.AttrSIPCallStatus] = CallDialing.Attribute()
-	lkNew.Participant.Attributes = attrs
-	r := getRoom(c.log, &c.stats.Room)
-	if err := r.Connect(c.c.conf, lkNew); err != nil {
-		_ = r.Close()
-		return err
-	}
-	// We have to create the track early because we might play a dialtone while SIP connects.
-	// Thus, we are forced to set full sample rate here instead of letting the codec adapt to the SIP source sample rate.
-	local, err := r.NewParticipantTrack(RoomSampleRate)
-	if err != nil {
-		_ = r.Close()
-		return err
-	}
-	c.lkRoom = r
-	c.lkRoomIn = local
+// connectToAgent is no longer needed - agent session is created in newCall
+// This function is kept for compatibility but does nothing
+func (c *outboundCall) connectToAgent(ctx context.Context) error {
+	// Agent session is already created in newCall
+	// Connection to media happens in connectMedia()
 	return nil
 }
 
@@ -426,18 +402,17 @@ func (c *outboundCall) dialSIP(ctx context.Context, tid traceid.ID) error {
 		rctx, rcancel := context.WithCancel(ctx)
 		defer rcancel()
 
-		dst := c.lkRoomIn // already under mutex
-
-		// Play dialtone to the room while participant connects
+		// Play dialtone directly to SIP media output
 		go func(tid traceid.ID) {
 			rctx, span := tracer.Start(rctx, "tones.Play")
 			defer span.End()
 
-			if dst == nil {
-				c.log.Infow("room is not ready, ignoring dial tone")
+			aw := c.media.GetAudioWriter()
+			if aw == nil {
+				c.log.Infow("media not ready, ignoring dial tone")
 				return
 			}
-			err := tones.Play(rctx, dst, ringVolume, tones.ETSIRinging)
+			err := tones.Play(rctx, aw, ringVolume, tones.ETSIRinging)
 			if err != nil && !errors.Is(err, context.Canceled) {
 				c.log.Infow("cannot play dial tone", "error", err)
 			}
@@ -461,12 +436,16 @@ func (c *outboundCall) dialSIP(ctx context.Context, tid traceid.ID) error {
 }
 
 func (c *outboundCall) connectMedia() {
-	if w := c.lkRoom.SwapOutput(c.media.GetAudioWriter()); w != nil {
-		_ = w.Close()
+	// Connect agent session to SIP media (if agent is available)
+	if c.modelSession != nil {
+		if err := c.modelSession.ConnectMedia(c.media); err != nil {
+			c.log.Errorw("failed to connect agent session to media", err)
+			// Continue without agent - media will still work
+		}
+	} else {
+		// No agent - media will work but no AI processing
+		c.log.Warnw("no agent session available, media will work without AI", nil)
 	}
-	c.lkRoom.SetDTMFOutput(c.media)
-
-	c.media.WriteAudioTo(c.lkRoomIn)
 	c.media.HandleDTMF(c.handleDTMF)
 }
 
@@ -504,32 +483,13 @@ func (c *outboundCall) stopSIP(reason string) {
 }
 
 func (c *outboundCall) setStatus(v CallStatus) {
-	attr := v.Attribute()
-	if attr == "" {
-		return
-	}
-	if c.lkRoom == nil {
-		return
-	}
-	r := c.lkRoom.Room()
-	if r == nil {
-		return
-	}
-	r.LocalParticipant.SetAttributes(map[string]string{
-		livekit.AttrSIPCallStatus: attr,
-	})
+	// No room participant to update - agents don't have room participants
+	// Status is tracked in call state instead
 }
 
 func (c *outboundCall) setExtraAttrs(hdrToAttr map[string]string, opts livekit.SIPHeaderOptions, cc Signaling, hdrs Headers) {
-	extra := HeadersToAttrs(nil, hdrToAttr, opts, cc, hdrs)
-	if c.lkRoom != nil && len(extra) != 0 {
-		room := c.lkRoom.Room()
-		if room != nil {
-			room.LocalParticipant.SetAttributes(extra)
-		} else {
-			c.log.Warnw("could not set attributes on nil room", nil, "attrs", extra)
-		}
-	}
+	// No room attributes to set - agents don't have room participants
+	// Attributes are tracked in call state instead
 }
 
 func (c *outboundCall) sipSignal(ctx context.Context, tid traceid.ID) error {
@@ -628,21 +588,16 @@ func (c *outboundCall) sipSignal(ctx context.Context, tid traceid.ID) error {
 	c.setExtraAttrs(c.sipConf.headersToAttrs, c.sipConf.includeHeaders, c.cc, nil)
 	c.state.DeferUpdate(func(info *livekit.SIPCallInfo) {
 		info.AudioCodec = mc.Audio.Codec.Info().SDPName
-		if r := c.lkRoom.Room(); r != nil {
-			info.ParticipantAttributes = r.LocalParticipant.Attributes()
-		}
+		// No room participant attributes - agents don't have room participants
 	})
 	return nil
 }
 
 func (c *outboundCall) handleDTMF(ev dtmf.Event) {
-	if c.lkRoom == nil {
-		return
+	// Forward DTMF to agent if available
+	if c.modelSession != nil && c.modelSession.Model() != nil {
+		c.modelSession.Model().HandleDTMF(ev)
 	}
-	_ = c.lkRoom.SendData(&livekit.SipDTMF{
-		Code:  uint32(ev.Code),
-		Digit: string([]byte{ev.Digit}),
-	}, lksdk.WithDataPublishReliable(true))
 }
 
 func (c *outboundCall) transferCall(ctx context.Context, transferTo string, headers map[string]string, dialtone bool) (retErr error) {
@@ -658,13 +613,16 @@ func (c *outboundCall) transferCall(ctx context.Context, transferTo string, head
 		rctx, rcancel := context.WithCancel(ctx)
 		defer rcancel()
 
-		// mute the room audio to the SIP participant
-		w := c.lkRoom.SwapOutput(nil)
+		// mute the model audio to the SIP participant
+		var w msdk.PCM16Writer
+		if c.modelSession != nil {
+			w = c.modelSession.SwapOutput(nil)
+		}
 
 		defer func() {
-			if retErr != nil && !c.stopped.IsBroken() {
-				c.lkRoom.SwapOutput(w)
-			} else {
+			if retErr != nil && !c.stopped.IsBroken() && c.modelSession != nil {
+				c.modelSession.SwapOutput(w)
+			} else if w != nil {
 				w.Close()
 			}
 		}()

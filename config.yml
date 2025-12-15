@@ -8,10 +8,10 @@ transports:
     bind: 0.0.0.0
     port: 5060
 rtp_port: 10000-20000
+# listen_ip: 100.100.1.100
 use_external_ip: true
 logging:
   level: debug
-
 sip_trunks:
   - id: "1"
     username: ""
@@ -20,3 +20,45 @@ sip_trunks:
     allowed_ips:
       - "83.22.40.0/24"
       - "192.168.1.100"
+      - "46.224.124.243"
+      - "100.100.0.0/22"
+  - id: "2"
+    username: ""
+    password: ""
+    domain: "127.0.0.1"
+    allowed_ips:
+      - "127.0.0.1"
+
+models:
+  - id: "ultravox"
+    type: "multimodel"
+    provider: "ultravox.ai"
+    model: ultravox
+    name: "Ultravox AI Agent"
+    max_concurrent_calls: 10
+    answer_timeout: 5s
+    capabilities:
+      - audio
+      - dtmf
+    env:
+      - name: "ULTROVOX_API_KEY"
+        value: "1234567890"
+      - name: "ULTROVOX_API_SECRET"
+        value: "1234567890"
+      - name: "ULTROVOX_API_URL"
+        value: "https://api.ultravox.com"
+      - name: "ULTROVOX_API_URL"
+
+routes:
+  - id: "ultravox-prefix"
+    match: prefix
+    pattern: "381"
+    model: ultravox
+    priority: 10
+
+  # Fallback route
+  - id: "default"
+    match: any
+    model: ultravox
+    priority: 100
+

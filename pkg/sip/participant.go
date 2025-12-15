@@ -109,3 +109,33 @@ const (
 	callNoACK
 	callHangupMedia
 )
+
+// ParticipantConfig holds participant configuration
+// Kept for backward compatibility with CallDispatch
+type ParticipantConfig struct {
+	Identity   string
+	Name       string
+	Metadata   string
+	Attributes map[string]string
+}
+
+// RoomConfig holds room connection configuration
+// Kept for backward compatibility with CallDispatch (though Room is removed)
+type RoomConfig struct {
+	WsUrl       string
+	Token       string
+	RoomName    string
+	Participant ParticipantConfig
+	RoomPreset  string
+	RoomConfig  *livekit.RoomConfiguration
+	JitterBuf   bool
+}
+
+// ParticipantInfo holds participant information
+// Kept for backward compatibility
+type ParticipantInfo struct {
+	ID       string
+	RoomName string
+	Identity string
+	Name     string
+}

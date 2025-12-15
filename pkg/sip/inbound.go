@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"math"
 	"net/netip"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -44,11 +43,10 @@ import (
 	"github.com/livekit/protocol/tracer"
 	"github.com/livekit/protocol/utils/traceid"
 	"github.com/livekit/psrpc"
-	lksdk "github.com/livekit/server-sdk-go/v2"
 
 	"github.com/veloxvoip/sip/pkg/config"
+	"github.com/veloxvoip/sip/pkg/models"
 	"github.com/veloxvoip/sip/pkg/stats"
-	"github.com/veloxvoip/sip/res"
 )
 
 const (
@@ -318,15 +316,8 @@ func (s *Server) processInvite(req *sip.Request, tx sip.ServerTransaction) (retE
 
 	var call *inboundCall
 	cc := s.newInbound(log, LocalTag(callID), s.ContactURI(legTr), req, tx, func(headers map[string]string) map[string]string {
-		c := call
-		if c == nil || len(c.attrsToHdr) == 0 {
-			return headers
-		}
-		r := c.lkRoom.Room()
-		if r == nil {
-			return headers
-		}
-		return AttrsToHeaders(r.LocalParticipant.Attributes(), c.attrsToHdr, headers)
+		// No room attributes to convert - models don't have room participants
+		return headers
 	})
 	log = LoggerWithParams(log, cc)
 	log = LoggerWithHeaders(log, cc)
@@ -576,30 +567,30 @@ func (s *Server) onNotify(req *sip.Request, tx sip.ServerTransaction) {
 }
 
 type inboundCall struct {
-	s           *Server
-	tid         traceid.ID
-	logPtr      atomic.Pointer[logger.Logger]
-	cc          *sipInbound
-	mon         *stats.CallMonitor
-	state       *CallState
-	callStart   time.Time
-	extraAttrs  map[string]string
-	attrsToHdr  map[string]string
-	ctx         context.Context
-	cancel      func()
-	closeReason atomic.Pointer[ReasonHeader]
-	call        *rpc.SIPCall
-	media       *MediaPort
-	dtmf        chan dtmf.Event // buffered
-	lkRoom      RoomInterface   // LiveKit room; only active after correct pin is entered
-	callDur     func() time.Duration
-	joinDur     func() time.Duration
-	forwardDTMF atomic.Bool
-	done        atomic.Bool
-	started     core.Fuse
-	stats       Stats
-	jitterBuf   bool
-	projectID   string
+	s            *Server
+	tid          traceid.ID
+	logPtr       atomic.Pointer[logger.Logger]
+	cc           *sipInbound
+	mon          *stats.CallMonitor
+	state        *CallState
+	callStart    time.Time
+	extraAttrs   map[string]string
+	attrsToHdr   map[string]string
+	ctx          context.Context
+	cancel       func()
+	closeReason  atomic.Pointer[ReasonHeader]
+	call         *rpc.SIPCall
+	media        *MediaPort
+	dtmf         chan dtmf.Event // buffered
+	modelSession *ModelSession   // Model session; directly connects model to SIP media
+	callDur      func() time.Duration
+	joinDur      func() time.Duration
+	forwardDTMF  atomic.Bool
+	done         atomic.Bool
+	started      core.Fuse
+	stats        Stats
+	jitterBuf    bool
+	projectID    string
 }
 
 func (s *Server) newInboundCall(
@@ -629,8 +620,25 @@ func (s *Server) newInboundCall(
 	}
 	c.stats.Update()
 	c.setLog(log.WithValues("jitterBuf", c.jitterBuf))
-	// we need it created earlier so that the audio mixer is available for pin prompts
-	c.lkRoom = s.getRoom(c.log(), &c.stats.Room)
+	// Create agent session using GetModel method
+	// This will use Ultravox by default if no custom model factory is configured
+	callInfo := AgentCallInfo{
+		SipCallID: cc.SIPCallID(),
+	}
+	model, err := s.GetModel(context.TODO(), callInfo)
+	if err != nil {
+		c.log().Errorw("failed to get model", err)
+		// Continue without model - will fail later if needed
+	}
+
+	c.modelSession, err = NewModelSession(c.log(), &c.stats.ModelSession, func(log logger.Logger) (models.Model, error) {
+		return model, nil
+	})
+	if err != nil {
+		c.log().Errorw("failed to create model session", err)
+		// Continue without model - will fail later if needed
+	}
+
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	s.cmu.Lock()
 	s.byRemoteTag[cc.Tag()] = c
@@ -787,9 +795,7 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 	acceptCall := func(answerData []byte) (bool, error) {
 		headers := disp.Headers
 		c.attrsToHdr = disp.AttributesToHeaders
-		if r := c.lkRoom.Room(); r != nil {
-			headers = AttrsToHeaders(r.LocalParticipant.Attributes(), c.attrsToHdr, headers)
-		}
+		// No room attributes to convert - models don't have room participants
 		c.log().Infow("Accepting the call", "headers", headers)
 		err := c.cc.Accept(ctx, answerData, headers)
 		if errors.Is(err, errNoACK) {
@@ -852,24 +858,11 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 	disp.Room.JitterBuf = c.jitterBuf
 	ctx, cancel := context.WithTimeout(ctx, disp.MaxCallDuration)
 	defer cancel()
-	status := CallRinging
-	if pinPrompt {
-		status = CallActive
-	}
-	if err := c.joinRoom(ctx, disp.Room, status); err != nil {
-		return errors.Wrap(err, "failed joining room")
-	}
-	// Publish our own track.
-	if err := c.publishTrack(); err != nil {
-		c.log().Errorw("Cannot publish track", err)
-		c.close(true, callDropped, "publish-failed")
-		return errors.Wrap(err, "publishing track to room failed")
-	}
-	c.lkRoom.Subscribe()
+	// Model session is already created and will be connected to media in runMediaConn
+	// No need to join room or publish tracks - model connects directly to SIP media
 	if !pinPrompt {
-		c.log().Infow("Waiting for track subscription(s)")
-		// For dispatches without pin, we first wait for LK participant to become available,
-		// and also for at least one track subscription. In the meantime we keep ringing.
+		c.log().Infow("Waiting for model to be ready")
+		// For dispatches without pin, we first wait for model to be ready
 		if ok, err := c.waitSubscribe(ctx, disp.RingingTimeout); !ok {
 			return err // already sent a response. Could be success if caller hung up
 		}
@@ -878,14 +871,15 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 		}
 	}
 
+	// Start model session
+	if err := c.startModelSession(); err != nil {
+		return err
+	}
+
 	c.state.Update(ctx, func(info *livekit.SIPCallInfo) {
 		info.StartedAtNs = time.Now().UnixNano()
 		info.CallStatus = livekit.SIPCallStatus_SCS_ACTIVE
-		if r := c.lkRoom.Room(); r != nil {
-			info.RoomId = r.SID()
-			info.RoomName = r.Name()
-			info.ParticipantAttributes = r.LocalParticipant.Attributes()
-		}
+		// No room info for model sessions - models connect directly to SIP
 	})
 
 	c.started.Break()
@@ -907,11 +901,11 @@ func (c *inboundCall) handleInvite(ctx context.Context, tid traceid.ID, req *sip
 		case <-ctx.Done():
 			c.closeWithHangup()
 			return nil
-		case <-c.lkRoom.Closed():
+		case <-c.modelSession.Closed():
 			c.state.DeferUpdate(func(info *livekit.SIPCallInfo) {
 				info.DisconnectReason = livekit.DisconnectReason_CLIENT_INITIATED
 			})
-			c.close(false, callDropped, "removed")
+			c.close(false, callDropped, "model-session-closed")
 			return nil
 		case <-c.media.Timeout():
 			return c.mediaTimeout()
@@ -968,17 +962,18 @@ func (c *inboundCall) runMediaConn(tid traceid.ID, offerData []byte, enc livekit
 	if err = c.media.SetConfig(mconf); err != nil {
 		return nil, err
 	}
+
+	// Must be set earlier to send the pin prompts.
+	// if c.modelSession != nil {
+	// 	if w := c.modelSession.SwapOutput(c.media.GetAudioWriter()); w != nil {
+	// 		_ = w.Close()
+	// 	}
+	// }
+
 	if mconf.Audio.DTMFType != 0 {
 		c.media.HandleDTMF(c.handleDTMF)
 	}
 
-	// Must be set earlier to send the pin prompts.
-	if w := c.lkRoom.SwapOutput(c.media.GetAudioWriter()); w != nil {
-		_ = w.Close()
-	}
-	if mconf.Audio.DTMFType != 0 {
-		c.lkRoom.SetDTMFOutput(c.media)
-	}
 	c.state.DeferUpdate(func(info *livekit.SIPCallInfo) {
 		info.AudioCodec = mconf.Audio.Codec.Info().SDPName
 	})
@@ -1004,9 +999,9 @@ func (c *inboundCall) waitMedia(ctx context.Context) (bool, error) {
 	case <-ctx.Done():
 		c.closeWithHangup()
 		return false, nil // caller hung up
-	case <-c.lkRoom.Closed():
+	case <-c.modelSession.Closed():
 		c.closeWithHangup()
-		return false, psrpc.NewErrorf(psrpc.Canceled, "room closed")
+		return false, psrpc.NewErrorf(psrpc.Canceled, "model session closed")
 	case <-c.media.Timeout():
 		return false, c.mediaTimeout()
 	case <-c.media.Received():
@@ -1018,7 +1013,9 @@ func (c *inboundCall) waitMedia(ctx context.Context) (bool, error) {
 func (c *inboundCall) waitSubscribe(ctx context.Context, timeout time.Duration) (bool, error) {
 	ctx, span := tracer.Start(ctx, "inboundCall.waitSubscribe")
 	defer span.End()
-	timer := time.NewTimer(timeout)
+	// For models, we don't need to wait for subscription - model is ready immediately
+	// Just wait a short time to ensure model is connected, but respect timeout
+	timer := time.NewTimer(min(timeout, 500*time.Millisecond))
 	defer timer.Stop()
 	select {
 	case <-c.cc.Cancelled():
@@ -1027,15 +1024,13 @@ func (c *inboundCall) waitSubscribe(ctx context.Context, timeout time.Duration) 
 	case <-ctx.Done():
 		c.closeWithHangup()
 		return false, nil
-	case <-c.lkRoom.Closed():
+	case <-c.modelSession.Closed():
 		c.closeWithHangup()
-		return false, psrpc.NewErrorf(psrpc.Canceled, "room closed")
+		return false, psrpc.NewErrorf(psrpc.Canceled, "model session closed")
 	case <-c.media.Timeout():
 		return false, c.mediaTimeout()
 	case <-timer.C:
-		c.close(false, callDropped, "cannot-subscribe")
-		return false, psrpc.NewErrorf(psrpc.DeadlineExceeded, "room subscription timed out")
-	case <-c.lkRoom.Subscribed():
+		// Model is ready
 		return true, nil
 	}
 }
@@ -1087,12 +1082,12 @@ func (c *inboundCall) pinPrompt(ctx context.Context, trunkID string) (disp CallD
 				if disp.DispatchRuleID != "" {
 					c.appendLogValues("sipRule", disp.DispatchRuleID)
 				}
-				if disp.Result != DispatchAccept || disp.Room.RoomName == "" {
-					c.log().Infow("Rejecting call", "pin", pin, "noPin", noPin)
-					c.playAudio(ctx, c.s.res.wrongPin)
-					c.close(false, callDropped, "wrong-pin")
-					return disp, false, psrpc.NewErrorf(psrpc.PermissionDenied, "wrong pin")
-				}
+				// if disp.Result != DispatchAccept || disp.Room.RoomName == "" {
+				// 	c.log().Infow("Rejecting call", "pin", pin, "noPin", noPin)
+				// 	c.playAudio(ctx, c.s.res.wrongPin)
+				// 	c.close(false, callDropped, "wrong-pin")
+				// 	return disp, false, psrpc.NewErrorf(psrpc.PermissionDenied, "wrong pin")
+				// }
 				c.playAudio(ctx, c.s.res.roomJoin)
 				return disp, true, nil
 			}
@@ -1222,112 +1217,55 @@ func (c *inboundCall) Close() error {
 }
 
 func (c *inboundCall) closeMedia() {
-	c.lkRoom.Close()
+	if c.modelSession != nil {
+		c.modelSession.Close()
+	}
 	if c.media != nil {
 		c.media.Close()
 	}
 }
 
+// startModelSession starts the model session and connects it to SIP media
+func (c *inboundCall) startModelSession() error {
+	if c.modelSession == nil {
+		return nil
+	}
+
+	c.forwardDTMF.Store(true) // Forward DTMF to model
+
+	// Connect model session to SIP media (if model is available)
+	if err := c.modelSession.ConnectMedia(c.media); err != nil {
+		c.log().Errorw("failed to connect model session to media", err)
+		// Continue without model - media will still work
+	}
+	if err := c.modelSession.Start(); err != nil {
+		c.log().Errorw("failed to start model session", err)
+		c.close(true, callDropped, "model-session-failed")
+		return err
+	}
+	return nil
+}
+
 func (c *inboundCall) setStatus(v CallStatus) {
-	attr := v.Attribute()
-	if attr == "" {
-		return
-	}
-	if c.lkRoom == nil {
-		return
-	}
-	r := c.lkRoom.Room()
-	if r == nil || r.LocalParticipant == nil {
-		return
-	}
-
-	r.LocalParticipant.SetAttributes(map[string]string{
-		livekit.AttrSIPCallStatus: attr,
-	})
+	// No room participant to update - models don't have room participants
+	// Status is tracked in call state instead
 }
 
-func (c *inboundCall) createLiveKitParticipant(ctx context.Context, rconf RoomConfig, status CallStatus) error {
-	ctx, span := tracer.Start(ctx, "inboundCall.createLiveKitParticipant")
-	defer span.End()
-	partConf := &rconf.Participant
-	if partConf.Attributes == nil {
-		partConf.Attributes = make(map[string]string)
-	}
-	for k, v := range c.extraAttrs {
-		partConf.Attributes[k] = v
-	}
-	partConf.Attributes[livekit.AttrSIPCallStatus] = status.Attribute()
-	c.forwardDTMF.Store(true)
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-	}
-
-	err := c.s.RegisterTransferSIPParticipant(LocalTag(c.cc.ID()), c)
-	if err != nil {
-		return err
-	}
-
-	err = c.lkRoom.Connect(c.s.conf, rconf)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (c *inboundCall) publishTrack() error {
-	local, err := c.lkRoom.NewParticipantTrack(RoomSampleRate)
-	if err != nil {
-		_ = c.lkRoom.Close()
-		return err
-	}
-	c.media.WriteAudioTo(local)
-	return nil
-}
-
-func (c *inboundCall) joinRoom(ctx context.Context, rconf RoomConfig, status CallStatus) error {
-	if c.joinDur != nil {
-		c.joinDur()
-	}
-	c.callDur = c.mon.CallDur()
-	c.appendLogValues(
-		"room", rconf.RoomName,
-		"participant", rconf.Participant.Identity,
-		"participantName", rconf.Participant.Name,
-	)
-	c.log().Infow("Joining room")
-	if err := c.createLiveKitParticipant(ctx, rconf, status); err != nil {
-		c.log().Errorw("Cannot create LiveKit participant", err)
-		c.close(true, callDropped, "participant-failed")
-		return errors.Wrap(err, "cannot create LiveKit participant")
-	}
-	return nil
-}
-
+// playAudio plays audio frames directly to the RTP port (to SIP caller)
 func (c *inboundCall) playAudio(ctx context.Context, frames []msdk.PCM16Sample) {
-	t := c.lkRoom.NewTrack()
-	if t == nil {
-		return // closed
+	if c.media == nil {
+		return
 	}
-	defer t.Close()
+	aw := c.media.GetAudioWriter()
 
-	sampleRate := res.SampleRate
-	if t.SampleRate() != sampleRate {
-		frames = slices.Clone(frames)
-		for i := range frames {
-			frames[i] = msdk.Resample(nil, t.SampleRate(), frames[i], sampleRate)
-		}
-	}
-	_ = msdk.PlayAudio[msdk.PCM16Sample](ctx, t, rtp.DefFrameDur, frames)
+	// Play audio directly to RTP port
+	_ = msdk.PlayAudio[msdk.PCM16Sample](ctx, aw, rtp.DefFrameDur, frames)
 }
 
 func (c *inboundCall) handleDTMF(tone dtmf.Event) {
-	if c.forwardDTMF.Load() {
-		_ = c.lkRoom.SendData(&livekit.SipDTMF{
-			Code:  uint32(tone.Code),
-			Digit: string([]byte{tone.Digit}),
-		}, lksdk.WithDataPublishReliable(true))
+	if c.forwardDTMF.Load() && c.modelSession != nil {
+		// Forward DTMF to session
+		c.modelSession.HandleDTMF(tone)
 		return
 	}
 	// We should have enough buffer here.
@@ -1350,12 +1288,15 @@ func (c *inboundCall) transferCall(ctx context.Context, transferTo string, heade
 		rctx, rcancel := context.WithCancel(ctx)
 		defer rcancel()
 
-		// mute the room audio to the SIP participant
-		w := c.lkRoom.SwapOutput(nil)
+		// mute the model audio to the SIP participant
+		var w msdk.PCM16Writer
+		if c.modelSession != nil {
+			w = c.modelSession.SwapOutput(nil)
+		}
 
 		defer func() {
-			if retErr != nil && !c.done.Load() {
-				c.lkRoom.SwapOutput(w)
+			if retErr != nil && !c.done.Load() && c.modelSession != nil {
+				c.modelSession.SwapOutput(w)
 			} else if w != nil {
 				w.Close()
 			}

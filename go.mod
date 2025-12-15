@@ -11,6 +11,7 @@ require (
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/icholy/digest v1.1.0
 	github.com/jfreymuth/oggvorbis v1.0.5
+	github.com/joho/godotenv v1.5.1
 	github.com/livekit/mageutil v0.0.0-20250511045019-0f1ff63f7731
 	github.com/livekit/media-sdk v0.0.0-20251210135237-a9b09a0c179b
 	github.com/livekit/mediatransportutil v0.0.0-20250519131108-fb90f5acfded
@@ -19,6 +20,7 @@ require (
 	github.com/livekit/server-sdk-go/v2 v2.11.4-0.20251016050252-63f7c8381817
 	github.com/mjibson/go-dsp v0.0.0-20180508042940-11479a337f12
 	github.com/ory/dockertest/v3 v3.12.0
+	github.com/paulgrammer/ultravox v0.0.0-20250618233649-da858c25bad9
 	github.com/pion/interceptor v0.1.41
 	github.com/pion/rtp v1.8.23
 	github.com/pion/sdp/v3 v3.0.16
@@ -78,7 +80,7 @@ require (
 	github.com/google/cel-go v0.26.1 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
+	github.com/gorilla/websocket v1.5.3
 	github.com/gotranspile/g722 v0.0.0-20240123003956-384a1bb16a19 // indirect
 	github.com/jfreymuth/vorbis v1.0.2 // indirect
 	github.com/jxskiss/base62 v1.1.0 // indirect

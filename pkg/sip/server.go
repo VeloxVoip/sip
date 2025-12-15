@@ -39,6 +39,8 @@ import (
 	"github.com/livekit/protocol/utils/traceid"
 
 	"github.com/veloxvoip/sip/pkg/config"
+	"github.com/veloxvoip/sip/pkg/models"
+	"github.com/veloxvoip/sip/pkg/models/ultravox"
 	"github.com/veloxvoip/sip/pkg/stats"
 )
 
@@ -115,6 +117,12 @@ type CallIdentifier struct {
 	SipCallID string
 }
 
+// AgentCallInfo contains minimal call information needed for agent creation
+// This is shared between inbound and outbound calls
+type AgentCallInfo struct {
+	SipCallID string
+}
+
 type Handler interface {
 	GetAuthCredentials(ctx context.Context, call *rpc.SIPCall) (AuthInfo, error)
 	DispatchCall(ctx context.Context, info *CallInfo) CallDispatch
@@ -132,7 +140,7 @@ type Server struct {
 	region       string
 	sipSrv       *sipgo.Server
 	getIOClient  GetIOInfoClient
-	getRoom      GetRoomFunc
+	getModel     models.GetModelFunc
 	sipListeners []io.Closer
 	sipUnhandled RequestHandler
 
@@ -164,10 +172,10 @@ type inProgressInvite struct {
 
 type ServerOption func(s *Server)
 
-func WithGetRoomServer(fn GetRoomFunc) ServerOption {
+func WithGetModelServer(fn models.GetModelFunc) ServerOption {
 	return func(s *Server) {
 		if fn != nil {
-			s.getRoom = fn
+			s.getModel = fn
 		}
 	}
 }
@@ -182,7 +190,6 @@ func NewServer(region string, conf *config.Config, log logger.Logger, mon *stats
 		region:      region,
 		mon:         mon,
 		getIOClient: getIOClient,
-		getRoom:     DefaultGetRoomFunc,
 		byRemoteTag: make(map[RemoteTag]*inboundCall),
 		byLocalTag:  make(map[LocalTag]*inboundCall),
 		byCallID:    make(map[string]*inboundCall),
@@ -352,4 +359,18 @@ func (s *Server) RegisterTransferSIPParticipant(sipCallID LocalTag, i *inboundCa
 
 func (s *Server) DeregisterTransferSIPParticipant(sipCallID LocalTag) {
 	s.handler.DeregisterTransferSIPParticipantTopic(string(sipCallID))
+}
+
+// GetModel returns a Model instance for the given SIP call
+// By default, returns an Ultravox model if no custom model factory is configured
+func (s *Server) GetModel(ctx context.Context, callInfo AgentCallInfo) (models.Model, error) {
+	// If a custom model factory is configured, use it
+	// if s.getModel != nil {
+	// 	log := s.log.WithValues("callID", callInfo.SipCallID)
+	// 	return s.getModel(log)
+	// }
+
+	// Default to Ultravox model
+	log := s.log.WithValues("callID", callInfo.SipCallID, "model", "ultravox")
+	return ultravox.NewUltravoxModel(log)
 }

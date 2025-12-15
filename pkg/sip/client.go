@@ -35,6 +35,8 @@ import (
 
 	"github.com/veloxvoip/sip/pkg/config"
 	siperrors "github.com/veloxvoip/sip/pkg/errors"
+	"github.com/veloxvoip/sip/pkg/models"
+	"github.com/veloxvoip/sip/pkg/models/ultravox"
 	"github.com/veloxvoip/sip/pkg/stats"
 )
 
@@ -69,7 +71,7 @@ type Client struct {
 	handler      Handler
 	getIOClient  GetIOInfoClient
 	getSipClient GetSipClientFunc
-	getRoom      GetRoomFunc
+	getModel     models.GetModelFunc
 }
 
 type ClientOption func(c *Client)
@@ -82,10 +84,10 @@ func WithGetSipClient(fn GetSipClientFunc) ClientOption {
 	}
 }
 
-func WithGetRoomClient(fn GetRoomFunc) ClientOption {
+func WithGetAgentClient(fn models.GetModelFunc) ClientOption {
 	return func(c *Client) {
 		if fn != nil {
-			c.getRoom = fn
+			c.getModel = fn
 		}
 	}
 }
@@ -101,7 +103,6 @@ func NewClient(region string, conf *config.Config, log logger.Logger, mon *stats
 		mon:          mon,
 		getIOClient:  getIOClient,
 		getSipClient: DefaultGetSipClientFunc,
-		getRoom:      DefaultGetRoomFunc,
 		activeCalls:  make(map[LocalTag]*outboundCall),
 		byRemote:     make(map[RemoteTag]*outboundCall),
 	}
@@ -366,4 +367,24 @@ func (c *Client) RegisterTransferSIPParticipant(sipCallID string, o *outboundCal
 
 func (c *Client) DeregisterTransferSIPParticipant(sipCallID string) {
 	c.handler.DeregisterTransferSIPParticipantTopic(sipCallID)
+}
+
+// GetModel returns a Model instance for the given SIP call
+// By default, returns an Ultravox model if no custom model factory is configured
+func (c *Client) GetModel(ctx context.Context, callInfo AgentCallInfo) (models.Model, error) {
+	// If a custom model factory is configured, use it
+	// if c.getModel != nil {
+	// 	log := c.log.WithValues("callID", callInfo.SipCallID)
+	// 	return c.getModel(log)
+	// }
+
+	// Default to Ultravox model
+	log := c.log.WithValues("callID", callInfo.SipCallID, "model", "ultravox")
+	return ultravox.NewUltravoxModel(log)
+}
+
+// GetAgent returns an Agent instance for the given SIP call (for backward compatibility)
+// Deprecated: Use GetModel instead
+func (c *Client) GetAgent(ctx context.Context, callInfo AgentCallInfo) (models.Model, error) {
+	return c.GetModel(ctx, callInfo)
 }

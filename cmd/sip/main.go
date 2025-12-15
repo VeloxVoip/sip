@@ -35,6 +35,8 @@ import (
 	"github.com/veloxvoip/sip/pkg/service"
 	"github.com/veloxvoip/sip/pkg/sip"
 	"github.com/veloxvoip/sip/version"
+
+	_ "github.com/joho/godotenv/autoload"
 )
 
 func main() {

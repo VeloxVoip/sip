@@ -79,7 +79,22 @@ func (h *CustomHandler) buildAuthInfo(trunk *config.SIPTrunk) AuthInfo {
 }
 
 func (h *CustomHandler) DispatchCall(ctx context.Context, info *CallInfo) CallDispatch {
-	return CallDispatch{}
+	return CallDispatch{
+		ProjectID: "N/A",
+		TrunkID:   info.TrunkID,
+		Result:    DispatchRequestPin,
+		// Result:         DispatchAccept,
+		DispatchRuleID: "N/A",
+		Room: RoomConfig{
+			RoomName: "N/A",
+			Participant: ParticipantConfig{
+				Identity:   "N/A",
+				Name:       "N/A",
+				Metadata:   "",
+				Attributes: map[string]string{},
+			},
+		},
+	}
 }
 
 func (h *CustomHandler) OnSessionEnd(ctx context.Context, callIdentifier *CallIdentifier, callInfo *livekit.SIPCallInfo, reason string) {

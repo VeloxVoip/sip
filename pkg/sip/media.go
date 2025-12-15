@@ -35,36 +35,15 @@ import (
 var _ json.Marshaler = (*Stats)(nil)
 
 type Stats struct {
-	Port   PortStats
-	Room   RoomStats
-	Closed atomic.Bool
+	Port         PortStats
+	ModelSession ModelSessionStats // Model session statistics
+	Closed       atomic.Bool
 }
 
 type StatsSnapshot struct {
-	Port   PortStatsSnapshot  `json:"port"`
-	Room   RoomStatsSnapshot  `json:"room"`
-	Mixer  MixerStatsSnapshot `json:"mixer"`
-	Closed bool               `json:"closed"`
-}
-
-type MixerStatsSnapshot struct {
-	Tracks      int64  `json:"tracks"`
-	TracksTotal uint64 `json:"tracks_total"`
-	Restarts    uint64 `json:"restarts"`
-
-	Mixes      uint64 `json:"mixes"`
-	TimedMixes uint64 `json:"mixes_timed"`
-	JumpMixes  uint64 `json:"mixes_jump"`
-	ZeroMixes  uint64 `json:"mixes_zero"`
-
-	InputSamples uint64 `json:"input_samples"`
-	InputFrames  uint64 `json:"input_frames"`
-
-	MixedSamples uint64 `json:"mixed_samples"`
-	MixedFrames  uint64 `json:"mixed_frames"`
-
-	OutputSamples uint64 `json:"output_samples"`
-	OutputFrames  uint64 `json:"output_frames"`
+	Port         PortStatsSnapshot         `json:"port"`
+	ModelSession ModelSessionStatsSnapshot `json:"model_session"`
+	Closed       bool                      `json:"closed"`
 }
 
 func (s *Stats) Update() {
@@ -72,32 +51,16 @@ func (s *Stats) Update() {
 		return
 	}
 	s.Port.Update()
-	s.Room.Update()
+	s.ModelSession.Update()
 }
 
 func (s *Stats) Load() StatsSnapshot {
 	p := &s.Port
-	r := &s.Room
-	m := &r.Mixer
+	ms := &s.ModelSession
 	return StatsSnapshot{
-		Port: p.Load(),
-		Room: r.Load(),
-		Mixer: MixerStatsSnapshot{
-			Tracks:        m.Tracks.Load(),
-			TracksTotal:   m.TracksTotal.Load(),
-			Restarts:      m.Restarts.Load(),
-			Mixes:         m.Mixes.Load(),
-			TimedMixes:    m.TimedMixes.Load(),
-			JumpMixes:     m.JumpMixes.Load(),
-			ZeroMixes:     m.ZeroMixes.Load(),
-			InputSamples:  m.InputSamples.Load(),
-			InputFrames:   m.InputFrames.Load(),
-			MixedSamples:  m.MixedSamples.Load(),
-			MixedFrames:   m.MixedFrames.Load(),
-			OutputSamples: m.OutputSamples.Load(),
-			OutputFrames:  m.OutputFrames.Load(),
-		},
-		Closed: s.Closed.Load(),
+		Port:         p.Load(),
+		ModelSession: ms.Load(),
+		Closed:       s.Closed.Load(),
 	}
 }
 
@@ -109,7 +72,7 @@ func (s *Stats) Log(log logger.Logger, callStart time.Time) {
 		"durMin", int(time.Since(callStart).Minutes()),
 		"sip_rx_ppm", ratePPM(st.Port.AudioRX, expectedSampleRate),
 		"sip_tx_ppm", ratePPM(st.Port.AudioTX, expectedSampleRate),
-		"lk_publish_ppm", ratePPM(st.Room.PublishTX, expectedSampleRate),
+		"model_publish_ppm", ratePPM(st.ModelSession.PublishTX, expectedSampleRate),
 		"expected_pcm_hz", expectedSampleRate,
 	)
 }

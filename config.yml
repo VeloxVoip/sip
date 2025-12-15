@@ -1,0 +1,22 @@
+redis:
+  address: 'localhost:6379'
+transports:
+  - network: "udp"
+    bind: 0.0.0.0
+    port: 5060
+  - network: "tcp"
+    bind: 0.0.0.0
+    port: 5060
+rtp_port: 10000-20000
+use_external_ip: true
+logging:
+  level: debug
+
+sip_trunks:
+  - id: "1"
+    username: ""
+    password: ""
+    domain: "iptel.org"
+    allowed_ips:
+      - "83.22.40.0/24"
+      - "192.168.1.100"

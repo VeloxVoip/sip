@@ -97,7 +97,7 @@ func runService(_ context.Context, c *cli.Command) error {
 		return err
 	}
 	svc := service.NewService(conf, log, sipsrv, sipsrv.Stop, sipsrv.ActiveCalls, psrpcClient, bus, mon)
-	sipsrv.SetHandler(svc)
+	sipsrv.SetHandler(sip.NewCustomHandler(conf))
 
 	if err = sipsrv.Start(); err != nil {
 		return err

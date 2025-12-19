@@ -378,9 +378,18 @@ func (c *Client) GetModel(ctx context.Context, callInfo AgentCallInfo) (models.M
 	// 	return c.getModel(log)
 	// }
 
-	// Default to Ultravox model
+	// Default to Ultravox model with configuration from config.yml
 	log := c.log.WithValues("callID", callInfo.SipCallID, "model", "ultravox")
-	return ultravox.NewUltravoxModel(log)
+
+	// Get Ultravox configuration from config.yml
+	var opts []ultravox.UltravoxModelOption
+	if c.conf != nil {
+		if ultravoxCfg := c.conf.GetUltravoxConfig("ultravox"); ultravoxCfg != nil {
+			opts = append(opts, ultravox.WithUltravoxConfig(ultravoxCfg))
+		}
+	}
+
+	return ultravox.NewUltravoxModel(log, opts...)
 }
 
 // GetAgent returns an Agent instance for the given SIP call (for backward compatibility)

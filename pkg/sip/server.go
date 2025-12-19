@@ -370,7 +370,16 @@ func (s *Server) GetModel(ctx context.Context, callInfo AgentCallInfo) (models.M
 	// 	return s.getModel(log)
 	// }
 
-	// Default to Ultravox model
+	// Default to Ultravox model with configuration from config.yml
 	log := s.log.WithValues("callID", callInfo.SipCallID, "model", "ultravox")
-	return ultravox.NewUltravoxModel(log)
+
+	// Get Ultravox configuration from config.yml
+	var opts []ultravox.UltravoxModelOption
+	if s.conf != nil {
+		if ultravoxCfg := s.conf.GetUltravoxConfig("config"); ultravoxCfg != nil {
+			opts = append(opts, ultravox.WithUltravoxConfig(ultravoxCfg))
+		}
+	}
+
+	return ultravox.NewUltravoxModel(log, opts...)
 }

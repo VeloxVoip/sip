@@ -65,6 +65,64 @@ type SIPTrunk struct {
 	AllowedIPs []string `yaml:"allowed_ips"`
 }
 
+// ModelConfig represents a model configuration from config.yml
+type ModelConfig struct {
+	ID                 string          `yaml:"id"`
+	Type               string          `yaml:"type"`
+	Provider           string          `yaml:"provider"`
+	Model              string          `yaml:"model"`
+	Name               string          `yaml:"name"`
+	MaxConcurrentCalls int             `yaml:"max_concurrent_calls"`
+	AnswerTimeout      time.Duration   `yaml:"answer_timeout"`
+	Capabilities       []string        `yaml:"capabilities"`
+	Env                []EnvVar        `yaml:"env"`
+	Ultravox           *UltravoxConfig `yaml:"ultravox,omitempty"`
+}
+
+// EnvVar represents an environment variable configuration
+type EnvVar struct {
+	Name  string `yaml:"name"`
+	Value string `yaml:"value"`
+}
+
+// UltravoxConfig contains Ultravox-specific configuration
+type UltravoxConfig struct {
+	ModelName          string              `yaml:"model_name"`
+	SampleRate         int                 `yaml:"sample_rate"`
+	SystemPrompt       string              `yaml:"system_prompt"`
+	FirstSpeaker       FirstSpeakerConfig  `yaml:"first_speaker"`
+	VAD                VADConfig           `yaml:"vad"`
+	InactivityMessages []InactivityMessage `yaml:"inactivity_messages"`
+	Call               UltravoxCallConfig  `yaml:"call"`
+}
+
+// FirstSpeakerConfig configures the first speaker behavior
+type FirstSpeakerConfig struct {
+	Enabled         bool          `yaml:"enabled"`
+	Uninterruptible bool          `yaml:"uninterruptible"`
+	Text            string        `yaml:"text"`
+	Delay           time.Duration `yaml:"delay"`
+}
+
+// VADConfig configures Voice Activity Detection
+type VADConfig struct {
+	TurnEndpointDelay time.Duration `yaml:"turn_endpoint_delay"`
+}
+
+// InactivityMessage represents a timed inactivity message
+type InactivityMessage struct {
+	Delay       time.Duration `yaml:"delay"`
+	Message     string        `yaml:"message"`
+	EndBehavior string        `yaml:"end_behavior"`
+}
+
+// UltravoxCallConfig contains call-level Ultravox settings
+type UltravoxCallConfig struct {
+	MaxDuration      time.Duration `yaml:"max_duration"`
+	RecordingEnabled bool          `yaml:"recording_enabled"`
+	LanguageHint     string        `yaml:"language_hint"`
+}
+
 // isIPAllowed checks if the source IP is allowed for the SIP trunk
 func (t *SIPTrunk) IsIPAllowed(sourceIP string) bool {
 	if validator, err := ipvalidator.NewIPValidator(t.AllowedIPs); err == nil {
@@ -127,7 +185,8 @@ type Config struct {
 		InboundWaitACK bool `yaml:"inbound_wait_ack"`
 	} `yaml:"experimental"`
 
-	SIPTrunks []SIPTrunk `yaml:"sip_trunks"`
+	SIPTrunks []SIPTrunk    `yaml:"sip_trunks"`
+	Models    []ModelConfig `yaml:"models"`
 }
 
 func NewConfig(confString string) (*Config, error) {
@@ -288,4 +347,23 @@ func (c *Config) GetSIPTrunkByHost(domain string) *SIPTrunk {
 		}
 	}
 	return nil
+}
+
+// GetModelConfig gets the model configuration by ID
+func (c *Config) GetModelConfig(id string) *ModelConfig {
+	for i := range c.Models {
+		if c.Models[i].ID == id {
+			return &c.Models[i]
+		}
+	}
+	return nil
+}
+
+// GetUltravoxConfig gets the Ultravox configuration for a specific model
+func (c *Config) GetUltravoxConfig(modelID string) *UltravoxConfig {
+	model := c.GetModelConfig(modelID)
+	if model == nil {
+		return nil
+	}
+	return model.Ultravox
 }

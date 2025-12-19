@@ -2,7 +2,7 @@ module github.com/veloxvoip/sip
 
 go 1.25.0
 
-ignore ./tmp/references
+ignore ./tmp
 
 require (
 	github.com/at-wat/ebml-go v0.17.1
@@ -20,7 +20,7 @@ require (
 	github.com/livekit/server-sdk-go/v2 v2.11.4-0.20251016050252-63f7c8381817
 	github.com/mjibson/go-dsp v0.0.0-20180508042940-11479a337f12
 	github.com/ory/dockertest/v3 v3.12.0
-	github.com/paulgrammer/ultravox v0.0.0-20250618233649-da858c25bad9
+	github.com/paulgrammer/ultravox v0.0.0-20251219143106-5966e6b43478
 	github.com/pion/interceptor v0.1.41
 	github.com/pion/rtp v1.8.23
 	github.com/pion/sdp/v3 v3.0.16

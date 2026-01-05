@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/frostbyte73/core"
+	"github.com/pkg/errors"
 	"golang.org/x/exp/maps"
 
 	"github.com/emiago/sipgo"
@@ -382,18 +383,11 @@ func (c *Client) GetModel(ctx context.Context, callInfo AgentCallInfo) (models.M
 	log := c.log.WithValues("callID", callInfo.SipCallID, "model", "ultravox")
 
 	// Get Ultravox configuration from config.yml
-	var opts []ultravox.UltravoxModelOption
 	if c.conf != nil {
 		if ultravoxCfg := c.conf.GetUltravoxConfig("ultravox"); ultravoxCfg != nil {
-			opts = append(opts, ultravox.WithUltravoxConfig(ultravoxCfg))
+			return ultravox.NewUltravoxModel(log, ultravoxCfg)
 		}
 	}
 
-	return ultravox.NewUltravoxModel(log, opts...)
-}
-
-// GetAgent returns an Agent instance for the given SIP call (for backward compatibility)
-// Deprecated: Use GetModel instead
-func (c *Client) GetAgent(ctx context.Context, callInfo AgentCallInfo) (models.Model, error) {
-	return c.GetModel(ctx, callInfo)
+	return nil, errors.New("model not found")
 }

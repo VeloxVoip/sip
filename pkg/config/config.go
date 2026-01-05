@@ -18,18 +18,16 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
-	"os"
 	"time"
 
+	"github.com/paulgrammer/ultravox"
 	"github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v3"
 
 	"github.com/livekit/mediatransportutil/pkg/rtcconfig"
 	"github.com/livekit/protocol/logger"
 	"github.com/livekit/protocol/logger/medialogutils"
-	"github.com/livekit/protocol/redis"
 	"github.com/livekit/protocol/utils/guid"
-	"github.com/livekit/psrpc"
 	lksdk "github.com/livekit/server-sdk-go/v2"
 
 	"github.com/veloxvoip/sip/pkg/errors"
@@ -67,16 +65,16 @@ type SIPTrunk struct {
 
 // ModelConfig represents a model configuration from config.yml
 type ModelConfig struct {
-	ID                 string          `yaml:"id"`
-	Type               string          `yaml:"type"`
-	Provider           string          `yaml:"provider"`
-	Model              string          `yaml:"model"`
-	Name               string          `yaml:"name"`
-	MaxConcurrentCalls int             `yaml:"max_concurrent_calls"`
-	AnswerTimeout      time.Duration   `yaml:"answer_timeout"`
-	Capabilities       []string        `yaml:"capabilities"`
-	Env                []EnvVar        `yaml:"env"`
-	Ultravox           *UltravoxConfig `yaml:"ultravox,omitempty"`
+	ID                 string                `yaml:"id"`
+	Type               string                `yaml:"type"`
+	Provider           string                `yaml:"provider"`
+	Model              string                `yaml:"model"`
+	Name               string                `yaml:"name"`
+	MaxConcurrentCalls int                   `yaml:"max_concurrent_calls"`
+	AnswerTimeout      time.Duration         `yaml:"answer_timeout"`
+	Capabilities       []string              `yaml:"capabilities"`
+	Env                []EnvVar              `yaml:"env"`
+	Ultravox           *ultravox.CallRequest `yaml:"ultravox,omitempty"`
 }
 
 // EnvVar represents an environment variable configuration
@@ -85,28 +83,38 @@ type EnvVar struct {
 	Value string `yaml:"value"`
 }
 
-// UltravoxConfig contains Ultravox-specific configuration
-type UltravoxConfig struct {
-	ModelName          string              `yaml:"model_name"`
-	SampleRate         int                 `yaml:"sample_rate"`
-	SystemPrompt       string              `yaml:"system_prompt"`
-	FirstSpeaker       FirstSpeakerConfig  `yaml:"first_speaker"`
-	VAD                VADConfig           `yaml:"vad"`
-	InactivityMessages []InactivityMessage `yaml:"inactivity_messages"`
-	Call               UltravoxCallConfig  `yaml:"call"`
+// MediumConfig represents the medium configuration
+type MediumConfig struct {
+	ServerWebSocket *WebSocketMediumConfig `yaml:"server_websocket,omitempty"`
+}
+
+// WebSocketMediumConfig represents WebSocket medium settings
+type WebSocketMediumConfig struct {
+	InputSampleRate    int `yaml:"input_sample_rate"`
+	OutputSampleRate   int `yaml:"output_sample_rate"`
+	ClientBufferSizeMs int `yaml:"client_buffer_size_ms"`
 }
 
 // FirstSpeakerConfig configures the first speaker behavior
 type FirstSpeakerConfig struct {
-	Enabled         bool          `yaml:"enabled"`
+	Agent *AgentGreetingConfig `yaml:"agent,omitempty"`
+	User  interface{}          `yaml:"user,omitempty"`
+}
+
+// AgentGreetingConfig contains agent greeting settings
+type AgentGreetingConfig struct {
 	Uninterruptible bool          `yaml:"uninterruptible"`
 	Text            string        `yaml:"text"`
+	Prompt          string        `yaml:"prompt"`
 	Delay           time.Duration `yaml:"delay"`
 }
 
 // VADConfig configures Voice Activity Detection
 type VADConfig struct {
-	TurnEndpointDelay time.Duration `yaml:"turn_endpoint_delay"`
+	TurnEndpointDelay           time.Duration `yaml:"turn_endpoint_delay"`
+	MinimumTurnDuration         time.Duration `yaml:"minimum_turn_duration"`
+	MinimumInterruptionDuration time.Duration `yaml:"minimum_interruption_duration"`
+	FrameActivationThreshold    float64       `yaml:"frame_activation_threshold"`
 }
 
 // InactivityMessage represents a timed inactivity message
@@ -114,13 +122,6 @@ type InactivityMessage struct {
 	Delay       time.Duration `yaml:"delay"`
 	Message     string        `yaml:"message"`
 	EndBehavior string        `yaml:"end_behavior"`
-}
-
-// UltravoxCallConfig contains call-level Ultravox settings
-type UltravoxCallConfig struct {
-	MaxDuration      time.Duration `yaml:"max_duration"`
-	RecordingEnabled bool          `yaml:"recording_enabled"`
-	LanguageHint     string        `yaml:"language_hint"`
 }
 
 // isIPAllowed checks if the source IP is allowed for the SIP trunk
@@ -132,11 +133,6 @@ func (t *SIPTrunk) IsIPAllowed(sourceIP string) bool {
 }
 
 type Config struct {
-	Redis     *redis.RedisConfig `yaml:"redis"`      // required
-	ApiKey    string             `yaml:"api_key"`    // required (env LIVEKIT_API_KEY)
-	ApiSecret string             `yaml:"api_secret"` // required (env LIVEKIT_API_SECRET)
-	WsUrl     string             `yaml:"ws_url"`     // required (env LIVEKIT_WS_URL)
-
 	HealthPort         int                 `yaml:"health_port"`
 	PrometheusPort     int                 `yaml:"prometheus_port"`
 	PProfPort          int                 `yaml:"pprof_port"`
@@ -191,19 +187,12 @@ type Config struct {
 
 func NewConfig(confString string) (*Config, error) {
 	conf := &Config{
-		ApiKey:      os.Getenv("LIVEKIT_API_KEY"),
-		ApiSecret:   os.Getenv("LIVEKIT_API_SECRET"),
-		WsUrl:       os.Getenv("LIVEKIT_WS_URL"),
 		ServiceName: "sip",
 	}
 	if confString != "" {
 		if err := yaml.Unmarshal([]byte(confString), conf); err != nil {
 			return nil, errors.ErrCouldNotParseConfig(err)
 		}
-	}
-
-	if conf.Redis == nil {
-		return nil, psrpc.NewErrorf(psrpc.InvalidArgument, "redis configuration is required")
 	}
 
 	return conf, nil
@@ -360,7 +349,7 @@ func (c *Config) GetModelConfig(id string) *ModelConfig {
 }
 
 // GetUltravoxConfig gets the Ultravox configuration for a specific model
-func (c *Config) GetUltravoxConfig(modelID string) *UltravoxConfig {
+func (c *Config) GetUltravoxConfig(modelID string) *ultravox.CallRequest {
 	model := c.GetModelConfig(modelID)
 	if model == nil {
 		return nil

@@ -37,8 +37,6 @@ func (c *IOTestClient) GetSIPTrunkAuthentication(_ context.Context, _ *rpc.GetSI
 func (c *IOTestClient) EvaluateSIPDispatchRules(_ context.Context, _ *rpc.EvaluateSIPDispatchRulesRequest, _ ...psrpc.RequestOption) (*rpc.EvaluateSIPDispatchRulesResponse, error) {
 	identity := fmt.Sprintf("phone-%d", num.Load())
 	token, err := sip.BuildSIPToken(sip.SIPTokenParams{
-		APIKey:              c.conf.ApiKey,
-		APISecret:           c.conf.ApiSecret,
 		RoomName:            c.conf.RoomName,
 		ParticipantIdentity: identity,
 		ParticipantName:     identity,
@@ -54,7 +52,6 @@ func (c *IOTestClient) EvaluateSIPDispatchRules(_ context.Context, _ *rpc.Evalua
 		ParticipantIdentity: identity,
 		ParticipantName:     identity,
 		Token:               token,
-		WsUrl:               c.conf.WsUrl,
 		Result:              rpc.SIPDispatchResult_ACCEPT,
 		SipTrunkId:          TrunkID,
 		SipDispatchRuleId:   DispatchRuleID,

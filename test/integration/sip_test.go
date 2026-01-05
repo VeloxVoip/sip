@@ -63,10 +63,6 @@ func runSIPServer(t testing.TB, lk *LiveKit) *SIPServer {
 	require.NoError(t, err)
 	conf := &config.Config{
 		NodeID:             utils.NewGuid("NS_"),
-		ApiKey:             lk.ApiKey,
-		ApiSecret:          lk.ApiSecret,
-		WsUrl:              lk.WsUrl,
-		Redis:              lk.Redis,
 		SIPPort:            sipPort,
 		SIPPortListen:      sipPort,
 		ListenIP:           local.String(),
@@ -89,7 +85,7 @@ func runSIPServer(t testing.TB, lk *LiveKit) *SIPServer {
 		t.Fatal(err)
 	}
 
-	svc := service.NewService(conf, log, sipsrv, sipsrv.Stop, sipsrv.ActiveCalls, psrpcCli, bus, mon)
+	svc := service.NewService(conf, log, sipsrv, sipsrv.Stop, sipsrv.ActiveCalls, psrpcCli, mon)
 	sipsrv.SetHandler(svc)
 	t.Cleanup(func() {
 		svc.Stop(true)

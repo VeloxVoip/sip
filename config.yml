@@ -1,5 +1,3 @@
-redis:
-  address: 'localhost:6379'
 transports:
   - network: "udp"
     bind: 0.0.0.0
@@ -19,9 +17,6 @@ sip_trunks:
     domain: "iptel.org"
     allowed_ips:
       - "83.22.40.0/24"
-      - "192.168.1.100"
-      - "46.224.124.243"
-      - "100.100.0.0/22"
   - id: "2"
     username: ""
     password: ""
@@ -37,25 +32,16 @@ models:
     name: "Ultravox AI Agent"
     max_concurrent_calls: 10
     answer_timeout: 5s
-    capabilities:
-      - audio
-      - dtmf
-    env:
-      - name: "ULTROVOX_API_KEY"
-        value: "1234567890"
-      - name: "ULTROVOX_API_SECRET"
-        value: "1234567890"
-      - name: "ULTROVOX_API_URL"
-        value: "https://api.ultravox.com"
-
-    # Ultravox-specific configuration
+    # Ultravox-specific configuration (maps to ultravox.CallRequest)
     ultravox:
-      # Model configuration
-      model_name: "fixie-ai/ultravox-v0.7"
-      sample_rate: 48000
+      # Basic properties
+      model: "fixie-ai/ultravox-v0.7"
+      temperature: 0.0
+      voice: ""  # Default Ultravox voice
+      # languageHint: "pl"  # Polish language hint
 
       # System prompt for the AI agent
-      system_prompt: |
+      systemPrompt: |
         ROLE
         You are a calm, patient, and highly effective Polish language teacher.
         You teach Polish to learners whose native language is English.
@@ -100,7 +86,7 @@ models:
         - Ask the learner to repeat words out loud before continuing
 
         A2 — Beginner
-        - Use short, simple Polish sentences
+        - Use short, simple and common Polish sentences
         - Limit vocabulary and grammar
         - Explain grammar briefly and simply
         - Frequently compare Polish to English
@@ -165,34 +151,25 @@ models:
         - Encourage the learner to continue practicing
         - Always leave the learner feeling confident and motivated
 
-      # First speaker settings
-      first_speaker:
-        enabled: true
-        uninterruptible: false
-        text: "Hello! What is your Polish level?"
-        delay: 0s
+      # Call timing and recording
+      maxDuration: 10m
+      joinTimeout: 30s
+      timeExceededMessage: ""
 
-      # Voice Activity Detection settings
-      vad:
-        turn_endpoint_delay: 400ms
+      # Medium configuration (WebSocket)
+      medium:
+        serverWebSocket:
+          inputSampleRate: 48000
+          outputSampleRate: 48000
+          clientBufferSizeMs: 0
 
-      # Inactivity messages configuration
-      inactivity_messages:
-        - delay: 5s
-          message: "Hello? I'm here whenever you're ready to continue practicing Polish."
-          end_behavior: "default"
-        - delay: 15s
-          message: "Take your time! I can wait while you think or repeat out loud."
-          end_behavior: "default"
-        - delay: 20s
-          message: "It seems you've paused. Let's stop for now, but you can resume practice anytime. Keep up your great effort!"
-          end_behavior: "hangup_soft"
-
-      # Call settings
-      call:
-        max_duration: 10m
-        recording_enabled: false
-        language_hint: ""  # Empty = auto-detect, or set to "PL" for Polish
+      # First speaker configuration
+      firstSpeakerSettings:
+        agent:
+          uninterruptible: false
+          text: "Hello! What is your Polish level?"
+          prompt: ""
+          delay: 0s
 
 routes:
   - id: "ultravox-prefix"

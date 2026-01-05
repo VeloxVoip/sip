@@ -20,10 +20,6 @@ func TestSIP(t *testing.T) {
 	conf, err := NewIntegrationConfig()
 	require.NoError(t, err)
 
-	if conf.ApiKey == "" || conf.ApiSecret == "" || conf.WsUrl == "" {
-		t.Skip("missing env vars")
-	}
-
 	bus := psrpc.NewLocalMessageBus()
 	svc, err := NewService(conf, bus)
 	require.NoError(t, err)

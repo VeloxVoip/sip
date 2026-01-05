@@ -47,7 +47,6 @@ type Service struct {
 
 	psrpcServer rpc.SIPInternalServerImpl
 	psrpcClient rpc.IOInfoClient
-	bus         psrpc.MessageBus
 
 	promServer   *http.Server
 	pprofServer  *http.Server
@@ -64,7 +63,7 @@ type Service struct {
 
 func NewService(
 	conf *config.Config, log logger.Logger, srv rpc.SIPInternalServerImpl, sipServiceStop sipServiceStopFunc,
-	sipServiceActiveCalls sipServiceActiveCallsFunc, cli rpc.IOInfoClient, bus psrpc.MessageBus, mon *stats.Monitor,
+	sipServiceActiveCalls sipServiceActiveCallsFunc, cli rpc.IOInfoClient, mon *stats.Monitor,
 ) *Service {
 	s := &Service{
 		conf: conf,
@@ -72,7 +71,6 @@ func NewService(
 
 		psrpcServer: srv,
 		psrpcClient: cli,
-		bus:         bus,
 
 		sipServiceStop:        sipServiceStop,
 		sipServiceActiveCalls: sipServiceActiveCalls,
@@ -164,12 +162,6 @@ func (s *Service) Run() error {
 			_ = srv.Serve(l)
 		}()
 	}
-
-	var err error
-	if s.rpcSIPServer, err = rpc.NewSIPInternalServer(s.psrpcServer, s.bus); err != nil {
-		return err
-	}
-	defer s.rpcSIPServer.Shutdown()
 
 	if err := s.RegisterCreateSIPParticipantTopic(); err != nil {
 		return err

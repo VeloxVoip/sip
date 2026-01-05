@@ -60,8 +60,10 @@ func (w *ultravoxPCMWriter) WriteSample(sample msdk.PCM16Sample) error {
 
 func (w *ultravoxPCMWriter) SampleRate() int {
 	// Get sample rate from model config or use default
-	if w.model.config != nil && w.model.config.SampleRate > 0 {
-		return w.model.config.SampleRate
+	if w.model.config != nil && w.model.config.Medium != nil && w.model.config.Medium.ServerWebSocket != nil {
+		if w.model.config.Medium.ServerWebSocket.OutputSampleRate > 0 {
+			return w.model.config.Medium.ServerWebSocket.OutputSampleRate
+		}
 	}
 	return DefaultUltravoxSampleRate
 }

@@ -24,9 +24,7 @@ import (
 	"github.com/urfave/cli/v3"
 
 	"github.com/livekit/protocol/logger"
-	"github.com/livekit/protocol/redis"
 	"github.com/livekit/protocol/rpc"
-	"github.com/livekit/psrpc"
 
 	"github.com/veloxvoip/sip/pkg/stats"
 
@@ -72,12 +70,6 @@ func runService(_ context.Context, c *cli.Command) error {
 	}
 	log := logger.GetLogger()
 
-	rc, err := redis.GetRedisClient(conf.Redis)
-	if err != nil {
-		return err
-	}
-
-	bus := psrpc.NewRedisMessageBus(rc)
 	psrpcClient, err := sip.NewFakeIOInfoClient()
 	if err != nil {
 		return err
@@ -98,7 +90,7 @@ func runService(_ context.Context, c *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	svc := service.NewService(conf, log, sipsrv, sipsrv.Stop, sipsrv.ActiveCalls, psrpcClient, bus, mon)
+	svc := service.NewService(conf, log, sipsrv, sipsrv.Stop, sipsrv.ActiveCalls, psrpcClient, mon)
 	sipsrv.SetHandler(sip.NewCustomHandler(conf))
 
 	if err = sipsrv.Start(); err != nil {

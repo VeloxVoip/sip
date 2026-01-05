@@ -29,7 +29,6 @@ import (
 	"github.com/livekit/protocol/logger"
 	"github.com/paulgrammer/ultravox"
 
-	"github.com/veloxvoip/sip/pkg/config"
 	"github.com/veloxvoip/sip/pkg/models"
 )
 
@@ -57,7 +56,7 @@ type UltravoxModel struct {
 	closed core.Fuse
 
 	// Configuration from config.yml
-	config *config.UltravoxConfig
+	config *ultravox.CallRequest
 
 	// Audio I/O (simplified - no bridges needed)
 	audioIn  msdk.PCM16Writer   // Direct input from SIP to Ultravox
@@ -75,45 +74,41 @@ var _ models.Model = (*UltravoxModel)(nil)
 type UltravoxModelOption func(*UltravoxModel)
 
 // WithUltravoxConfig sets the Ultravox configuration
-func WithUltravoxConfig(cfg *config.UltravoxConfig) UltravoxModelOption {
+func WithUltravoxConfig(cfg *ultravox.CallRequest) UltravoxModelOption {
 	return func(m *UltravoxModel) {
 		m.config = cfg
 	}
 }
 
 // NewUltravoxModel creates a new Ultravox agent instance
-func NewUltravoxModel(log logger.Logger, opts ...UltravoxModelOption) (models.Model, error) {
+func NewUltravoxModel(log logger.Logger, cfg *ultravox.CallRequest) (models.Model, error) {
 	if log == nil {
 		log = logger.GetLogger().WithComponent("ultravox_model")
 	}
 
 	model := &UltravoxModel{
-		log: log,
-	}
-
-	// Apply options (including config)
-	for _, opt := range opts {
-		opt(model)
+		log:    log,
+		config: cfg,
 	}
 
 	// Use configuration or defaults
 	modelName := DefaultUltravoxModelName
 	sampleRate := DefaultUltravoxSampleRate
 	if model.config != nil {
-		if model.config.ModelName != "" {
-			modelName = model.config.ModelName
+		if model.config.Model != "" {
+			modelName = model.config.Model
 		}
-		if model.config.SampleRate > 0 {
-			sampleRate = model.config.SampleRate
+		// Extract sample rate from Medium configuration if available
+		if model.config.Medium != nil && model.config.Medium.ServerWebSocket != nil {
+			if model.config.Medium.ServerWebSocket.OutputSampleRate > 0 {
+				sampleRate = model.config.Medium.ServerWebSocket.OutputSampleRate
+			}
 		}
 	}
 
 	// Create Ultravox client with configured model
 	model.client = ultravox.NewClient(
 		ultravox.WithModel(modelName),
-		ultravox.WithLanguageHint("pl"),
-		// ultravox.WithAPIKey(model.config.APIKey),
-		// ultravox.WithAPIBaseURL(model.config.APIBaseURL),
 	)
 
 	// Create audio output switch writer at configured sample rate
@@ -164,108 +159,47 @@ func (a *UltravoxModel) Run(ctx context.Context) error {
 // setupCall configures and creates an Ultravox call using configuration from config.yml
 func (a *UltravoxModel) setupCall(ctx context.Context) (*ultravox.Call, error) {
 	// Default values
-	systemPrompt := ""
-	maxDuration := 10 * time.Minute
-	recordingEnabled := false
-	languageHint := ""
 	sampleRate := DefaultUltravoxSampleRate
+	maxDuration := 10 * time.Minute
 
-	// First speaker defaults
-	firstSpeakerEnabled := true
-	firstSpeakerText := ""
-	firstSpeakerUninterruptible := false
-	firstSpeakerDelay := time.Duration(0)
-
-	// VAD defaults
-	turnEndpointDelay := 400 * time.Millisecond
-
-	// Inactivity message defaults
-	inactivityMessages := make([]ultravox.TimedMessage, 0)
-
-	// Load from config if available
-	if a.config != nil {
-		if a.config.SystemPrompt != "" {
-			systemPrompt = a.config.SystemPrompt
-		}
-		if a.config.SampleRate > 0 {
-			sampleRate = a.config.SampleRate
-		}
-		if a.config.Call.MaxDuration > 0 {
-			maxDuration = a.config.Call.MaxDuration
-		}
-		recordingEnabled = a.config.Call.RecordingEnabled
-		if a.config.Call.LanguageHint != "" {
-			languageHint = a.config.Call.LanguageHint
-		}
-
-		// Load first speaker settings from config
-		if a.config.FirstSpeaker.Text != "" {
-			firstSpeakerText = a.config.FirstSpeaker.Text
-		}
-		firstSpeakerEnabled = a.config.FirstSpeaker.Enabled
-		firstSpeakerUninterruptible = a.config.FirstSpeaker.Uninterruptible
-		if a.config.FirstSpeaker.Delay > 0 {
-			firstSpeakerDelay = a.config.FirstSpeaker.Delay
-		}
-
-		// Load VAD settings from config
-		if a.config.VAD.TurnEndpointDelay > 0 {
-			turnEndpointDelay = a.config.VAD.TurnEndpointDelay
-		}
-
-		// Load inactivity messages from config
-		if len(a.config.InactivityMessages) > 0 {
-			inactivityMessages = make([]ultravox.TimedMessage, 0, len(a.config.InactivityMessages))
-			for _, msg := range a.config.InactivityMessages {
-				endBehavior := ultravox.EndBehaviorDefault
-				switch msg.EndBehavior {
-				case "hangup_soft":
-					endBehavior = ultravox.EndBehaviorHangUpSoft
-					// Note: hangup_immediately may not be supported in current ultravox SDK version
-				}
-				inactivityMessages = append(inactivityMessages,
-					ultravox.NewTimedMessage(msg.Delay, msg.Message, endBehavior))
-			}
-		}
-	}
-
-	// Build call options
+	// Build call options starting with defaults
 	callOpts := []ultravox.CallOption{
-		ultravox.WithCallLanguageHint("pl"),
 		ultravox.WithCallMaxDuration(maxDuration),
-		ultravox.WithCallRecordingEnabled(recordingEnabled),
 		ultravox.WithCallWebSocketMedium(sampleRate, sampleRate),
+		ultravox.WithCallRecordingEnabled(false),
 	}
 
-	// Add system prompt if configured
-	if systemPrompt != "" {
-		callOpts = append(callOpts, ultravox.WithCallSystemPrompt(systemPrompt))
-	}
+	// If config is provided, use values from it
+	if a.config != nil {
+		// Use configured sample rate for medium if available
+		if a.config.Medium != nil && a.config.Medium.ServerWebSocket != nil {
+			if a.config.Medium.ServerWebSocket.InputSampleRate > 0 {
+				sampleRate = a.config.Medium.ServerWebSocket.InputSampleRate
+			}
+			callOpts = append(callOpts, ultravox.WithCallMedium(a.config.Medium))
+		} else {
+			callOpts = append(callOpts, ultravox.WithCallWebSocketMedium(sampleRate, sampleRate))
+		}
 
-	// Add language hint if configured
-	if languageHint != "" {
-		callOpts = append(callOpts, ultravox.WithCallLanguageHint(languageHint))
-	}
+		// Add system prompt if configured
+		if a.config.SystemPrompt != "" {
+			callOpts = append(callOpts, ultravox.WithCallSystemPrompt(a.config.SystemPrompt))
+		}
 
-	// Add first speaker settings if enabled
-	if firstSpeakerEnabled {
-		firstSpeakerSettings := ultravox.AgentFirstSpeaker(
-			firstSpeakerUninterruptible,
-			firstSpeakerText,
-			"", // No prompt (using text directly)
-			firstSpeakerDelay,
-		)
-		callOpts = append(callOpts, ultravox.WithCallFirstSpeakerSettings(firstSpeakerSettings))
-	}
+		// Add language hint if configured
+		if a.config.LanguageHint != "" {
+			callOpts = append(callOpts, ultravox.WithCallLanguageHint(a.config.LanguageHint))
+		}
 
-	// Add VAD settings
-	vadSettings := ultravox.NewVadSettings()
-	vadSettings.TurnEndpointDelay = ultravox.UltravoxDuration(turnEndpointDelay)
-	callOpts = append(callOpts, ultravox.WithCallVadSettings(vadSettings))
+		// Add first speaker settings if configured
+		if a.config.FirstSpeakerSettings != nil {
+			callOpts = append(callOpts, ultravox.WithCallFirstSpeakerSettings(a.config.FirstSpeakerSettings))
+		}
 
-	// Add inactivity messages
-	if len(inactivityMessages) > 0 {
-		callOpts = append(callOpts, ultravox.WithCallInactivityMessages(inactivityMessages))
+		// Configure VAD settings
+		vadSettings := ultravox.NewVadSettings()
+		vadSettings.TurnEndpointDelay = ultravox.UltravoxDuration(400 * time.Millisecond)
+		callOpts = append(callOpts, ultravox.WithCallVadSettings(vadSettings))
 	}
 
 	// Start new call with configured options
@@ -359,12 +293,4 @@ func (a *UltravoxModel) writePCMToUltravox(buf []byte) error {
 	}
 
 	return nil
-}
-
-// NewUltravoxModelFunc creates a GetModelFunc for Ultravox
-// This can be used with WithGetModelServer or WithGetModelClient
-func NewUltravoxModelFunc(opts ...UltravoxModelOption) models.GetModelFunc {
-	return func(log logger.Logger) (models.Model, error) {
-		return NewUltravoxModel(log, opts...)
-	}
 }
